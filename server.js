@@ -1,85 +1,81 @@
-import express from "express";
-import { randomUUID } from "node:crypto";
+const express = require('express');
+const { randomUUID } = require('crypto');
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
 
 app.use(express.json());
 
+// -----------------------------------------------------------------------------
+// CORS
+// -----------------------------------------------------------------------------
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
   if (origin) {
-    res.header("Access-Control-Allow-Origin", origin);
+    res.header('Access-Control-Allow-Origin', origin);
   }
 
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header(
-    "Access-Control-Allow-Methods",
-    "GET, POST, OPTIONS"
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization'
   );
 
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
-  );
-
-  if (req.method === "OPTIONS") {
+  if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
 
   next();
 });
 
-const queue = new Map();
-const matches = new Map();
-
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
 function normalizeScramble(value) {
-  return String(value ?? "")
-    .trim()
-    .replace(/\s+/g, " ");
+  return String(value ?? '').trim().replace(/\s+/g, ' ');
 }
 
 function normalizeUsername(value) {
-  const username = String(value ?? "")
-    .trim()
-    .replace(/\s+/g, " ");
-
-  return username.slice(0, 20) || "Player";
+  const username = String(value ?? '').trim().replace(/\s+/g, ' ');
+  return username.slice(0, 20) || 'Player';
 }
 
 function generateScramble(length = 20) {
-  const faces = ["R", "L", "U", "D", "F", "B"];
-  const suffixes = ["", "'", "2"];
-
+  const faces = ['R', 'L', 'U', 'D', 'F', 'B'];
+  const suffixes = ['', "'", '2'];
   const result = [];
-  let lastFace = "";
+  let lastFace = '';
 
   while (result.length < length) {
-    const face =
-      faces[Math.floor(Math.random() * faces.length)];
+    const face = faces[Math.floor(Math.random() * faces.length)];
 
     if (face === lastFace) {
       continue;
     }
 
-    result.push(
-      face +
-        suffixes[
-          Math.floor(Math.random() * suffixes.length)
-        ]
-    );
+    const suffix =
+      suffixes[Math.floor(Math.random() * suffixes.length)];
 
+    result.push(face + suffix);
     lastFace = face;
   }
 
-  return result.join(" ");
+  return result.join(' ');
 }
 
-function findActiveMatchByPlayerId(playerId) {
-  for (const match of matches.values()) {
+// -----------------------------------------------------------------------------
+// Existing Tournament /api/matchmaking/* state
+// IMPORTANT: keep this completely separate from Twist League.
+// -----------------------------------------------------------------------------
+const queue = new Map();
+const matches = new Map();
+
+function findActiveMatchByPlayerId(playerId, store = matches) {
+  for (const match of store.values()) {
     if (
-      match.phase !== "finished" &&
-      match.players.some((p) => p.id === playerId)
+      match.phase !== 'finished' &&
+      match.players.some((player) => player.id === playerId)
     ) {
       return match;
     }
@@ -90,11 +86,11 @@ function findActiveMatchByPlayerId(playerId) {
 
 function advanceMatch(match) {
   if (
-    match.phase === "ready" &&
+    match.phase === 'ready' &&
     match.raceStartAt !== null &&
     Date.now() >= match.raceStartAt
   ) {
-    match.phase = "racing";
+    match.phase = 'racing';
 
     for (const player of match.players) {
       if (player.startedAt === null) {
@@ -111,147 +107,101 @@ function snapshot(match) {
 
   return {
     ...match,
-    players: match.players.map((p) => ({
-      ...p,
-    })),
+    players: match.players.map((player) => ({ ...player })),
   };
 }
 
 function getMatch(req) {
   const id = String(
     req.body?.matchId ??
-      req.query.matchId ??
-      ""
+      req.query?.matchId ??
+      ''
   );
 
   return matches.get(id);
 }
 
-app.get("/api/health", (_req, res) => {
+app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    service: "cubepulse-matchmaking",
+    service: 'cubepulse-matchmaking',
     timestamp: Date.now(),
   });
 });
 
-/*
-|--------------------------------------------------------------------------
-| DEBUG
-|--------------------------------------------------------------------------
-*/
-
-app.get("/api/matchmaking/debug", (_req, res) => {
+app.get('/api/matchmaking/debug', (_req, res) => {
   res.json({
     ok: true,
 
-    queuedPlayers: [...queue.values()].map(
-      (entry) => ({
-        playerId: entry.playerId,
-        username: entry.username,
-      })
-    ),
+    queuedPlayers: [...queue.values()].map((entry) => ({
+      playerId: entry.playerId,
+      username: entry.username,
+    })),
 
-    activeMatches: [...matches.values()].map(
-      (match) => ({
-        id: match.id,
-        phase: match.phase,
+    activeMatches: [...matches.values()].map((match) => ({
+      id: match.id,
+      phase: match.phase,
 
-        players: match.players.map(
-          (player) => ({
-            id: player.id,
-            username: player.username,
-            ready: player.ready,
-          })
-        ),
-      })
-    ),
+      players: match.players.map((player) => ({
+        id: player.id,
+        username: player.username,
+        ready: player.ready,
+      })),
+    })),
   });
 });
 
-/*
-|--------------------------------------------------------------------------
-| JOIN / MATCHMAKING
-|--------------------------------------------------------------------------
-*/
-
-app.post("/api/matchmaking/join", (req, res) => {
+// -----------------------------------------------------------------------------
+// Tournament JOIN / MATCHMAKING
+// -----------------------------------------------------------------------------
+app.post('/api/matchmaking/join', (req, res) => {
   const playerId = String(
-    req.body?.playerId ||
-      randomUUID()
+    req.body?.playerId || randomUUID()
   );
 
   const username = normalizeUsername(
     req.body?.username
   );
 
-  console.log(
-    `[matchmaking] join player=${playerId} username="${username}"`
+  const existing = findActiveMatchByPlayerId(
+    playerId,
+    matches
   );
 
-  /*
-   * Check if player is already inside
-   * an active match.
-   */
-  const existing =
-    findActiveMatchByPlayerId(playerId);
-
   if (existing) {
-    const me =
-      existing.players.find(
-        (p) => p.id === playerId
-      );
+    const me = existing.players.find(
+      (player) => player.id === playerId
+    );
 
-    /*
-     * Always refresh the player's
-     * username when they reconnect.
-     */
     if (me) {
       me.username = username;
     }
 
     return res.json({
-      status: "matched",
+      status: 'matched',
       playerId,
       match: snapshot(existing),
     });
   }
 
-  /*
-   * Scramble supplied by client.
-   * If missing, generate one.
-   */
-  const requested =
-    normalizeScramble(
-      req.body?.scramble
-    );
+  const requested = normalizeScramble(
+    req.body?.scramble
+  );
 
   const scramble =
-    requested ||
-    generateScramble();
+    requested || generateScramble();
 
-  /*
-   * Remove duplicate queue entry
-   * for same player.
-   */
   for (const [key, entry] of queue) {
     if (entry.playerId === playerId) {
       queue.delete(key);
     }
   }
 
-  /*
-   * Find another player waiting.
-   */
-  const opponent =
-    [...queue.entries()].find(
-      ([, entry]) =>
-        entry.playerId !== playerId
-    );
+  const opponent = [...queue.entries()].find(
+    ([, entry]) =>
+      entry.playerId !== playerId
+  );
 
-  /*
-   * Nobody found yet.
-   */
   if (!opponent) {
     queue.set(playerId, {
       playerId,
@@ -260,14 +210,11 @@ app.post("/api/matchmaking/join", (req, res) => {
     });
 
     return res.json({
-      status: "searching",
+      status: 'searching',
       playerId,
     });
   }
 
-  /*
-   * Opponent found.
-   */
   queue.delete(opponent[0]);
 
   const match = {
@@ -276,6 +223,18 @@ app.post("/api/matchmaking/join", (req, res) => {
     scramble:
       opponent[1].scramble ||
       scramble,
+
+    phase: 'ready',
+
+    raceStartAt: null,
+
+    firstSolverId: null,
+
+    deadlineAt: null,
+
+    winnerId: null,
+
+    loserId: null,
 
     players: [
       {
@@ -296,119 +255,83 @@ app.post("/api/matchmaking/join", (req, res) => {
         solveTimeMs: null,
       },
     ],
-
-    phase: "ready",
-
-    raceStartAt: null,
-
-    firstSolverId: null,
-
-    deadlineAt: null,
-
-    winnerId: null,
-
-    loserId: null,
   };
 
-  matches.set(
-    match.id,
-    match
-  );
+  matches.set(match.id, match);
 
   console.log(
     `[matchmaking] matched ${match.players[0].username} vs ${match.players[1].username} match=${match.id}`
   );
 
   return res.json({
-    status: "matched",
+    status: 'matched',
     playerId,
     match: snapshot(match),
   });
 });
 
-/*
-|--------------------------------------------------------------------------
-| MATCH STATE
-|--------------------------------------------------------------------------
-*/
-
-app.get("/api/matchmaking/state", (req, res) => {
+// -----------------------------------------------------------------------------
+// Tournament MATCH STATE
+// -----------------------------------------------------------------------------
+app.get('/api/matchmaking/state', (req, res) => {
   const match = getMatch(req);
 
   if (!match) {
-    return res
-      .status(404)
-      .json({
-        error: "match not found",
-      });
+    return res.status(404).json({
+      error: 'match not found',
+    });
   }
 
-  res.json(
+  return res.json(
     snapshot(match)
   );
 });
 
-/*
-|--------------------------------------------------------------------------
-| READY
-|--------------------------------------------------------------------------
-*/
-
-app.post("/api/matchmaking/ready", (req, res) => {
+// -----------------------------------------------------------------------------
+// Tournament READY
+// -----------------------------------------------------------------------------
+app.post('/api/matchmaking/ready', (req, res) => {
   const match = getMatch(req);
 
-  const player =
-    match?.players.find(
-      (p) =>
-        p.id ===
-        String(
-          req.body?.playerId ||
-            ""
-        )
-    );
+  const playerId = String(
+    req.body?.playerId || ''
+  );
+
+  const player = match?.players.find(
+    (p) => p.id === playerId
+  );
 
   if (!match || !player) {
-    return res
-      .status(404)
-      .json({
-        error:
-          "match/player not found",
-      });
+    return res.status(404).json({
+      error: 'match/player not found',
+    });
   }
 
   player.ready = true;
 
-  res.json(
+  return res.json(
     snapshot(match)
   );
 });
 
-/*
-|--------------------------------------------------------------------------
-| START
-|--------------------------------------------------------------------------
-*/
-
-app.post("/api/matchmaking/start", (req, res) => {
+// -----------------------------------------------------------------------------
+// Tournament START
+// -----------------------------------------------------------------------------
+app.post('/api/matchmaking/start', (req, res) => {
   const match = getMatch(req);
 
-  const player =
-    match?.players.find(
-      (p) =>
-        p.id ===
-        String(
-          req.body?.playerId ||
-            ""
-        )
-    );
+  const playerId = String(
+    req.body?.playerId || ''
+  );
+
+  const player = match?.players.find(
+    (p) => p.id === playerId
+  );
 
   if (!match || !player) {
-    return res
-      .status(404)
-      .json({
-        error:
-          "match/player not found",
-      });
+    return res.status(404).json({
+      error: 'match/player not found',
+    });
   }
 
   if (
@@ -416,12 +339,9 @@ app.post("/api/matchmaking/start", (req, res) => {
       (p) => p.ready
     )
   ) {
-    return res
-      .status(409)
-      .json({
-        error:
-          "both players must be ready",
-      });
+    return res.status(409).json({
+      error: 'both players must be ready',
+    });
   }
 
   if (
@@ -431,50 +351,35 @@ app.post("/api/matchmaking/start", (req, res) => {
       Date.now() + 3000;
   }
 
-  res.json(
+  return res.json(
     snapshot(match)
   );
 });
 
-/*
-|--------------------------------------------------------------------------
-| SOLVE
-|--------------------------------------------------------------------------
-*/
-
-app.post("/api/matchmaking/solve", (req, res) => {
+// -----------------------------------------------------------------------------
+// Tournament SOLVE
+// -----------------------------------------------------------------------------
+app.post('/api/matchmaking/solve', (req, res) => {
   const match = getMatch(req);
 
-  const player =
-    match?.players.find(
-      (p) =>
-        p.id ===
-        String(
-          req.body?.playerId ||
-            ""
-        )
-    );
+  const playerId = String(
+    req.body?.playerId || ''
+  );
+
+  const player = match?.players.find(
+    (p) => p.id === playerId
+  );
 
   if (!match || !player) {
-    return res
-      .status(404)
-      .json({
-        error:
-          "match/player not found",
-      });
+    return res.status(404).json({
+      error: 'match/player not found',
+    });
   }
 
   advanceMatch(match);
 
   if (
-    match.phase !== "racing"
-  ) {
-    return res.json(
-      snapshot(match)
-    );
-  }
-
-  if (
+    match.phase !== 'racing' ||
     player.solvedAt !== null
   ) {
     return res.json(
@@ -534,9 +439,6 @@ app.post("/api/matchmaking/solve", (req, res) => {
         : calculated
     );
 
-  /*
-   * Finish window timeout.
-   */
   if (
     match.deadlineAt !== null &&
     match.firstSolverId !==
@@ -552,7 +454,7 @@ app.post("/api/matchmaking/solve", (req, res) => {
       );
 
     match.phase =
-      "finished";
+      'finished';
 
     match.winnerId =
       first?.id ?? null;
@@ -574,9 +476,6 @@ app.post("/api/matchmaking/solve", (req, res) => {
   player.solveTimeMs =
     solveTimeMs;
 
-  /*
-   * First solver.
-   */
   if (
     match.firstSolverId ===
     null
@@ -593,9 +492,6 @@ app.post("/api/matchmaking/solve", (req, res) => {
     );
   }
 
-  /*
-   * Second solver.
-   */
   const first =
     match.players.find(
       (p) =>
@@ -612,18 +508,18 @@ app.post("/api/matchmaking/solve", (req, res) => {
       .status(409)
       .json({
         error:
-          "first solver state is incomplete",
+          'first solver state is incomplete',
       });
   }
-
-  const firstTime =
-    first.solveTimeMs;
 
   const secondTime =
     player.solveTimeMs;
 
+  const firstTime =
+    first.solveTimeMs;
+
   match.phase =
-    "finished";
+    'finished';
 
   match.winnerId =
     secondTime < firstTime
@@ -635,35 +531,28 @@ app.post("/api/matchmaking/solve", (req, res) => {
       ? first.id
       : player.id;
 
-  res.json(
+  return res.json(
     snapshot(match)
   );
 });
 
-/*
-|--------------------------------------------------------------------------
-| TIMEOUT
-|--------------------------------------------------------------------------
-*/
-
-app.post("/api/matchmaking/timeout", (req, res) => {
-  const match =
-    getMatch(req);
+// -----------------------------------------------------------------------------
+// Tournament TIMEOUT
+// -----------------------------------------------------------------------------
+app.post('/api/matchmaking/timeout', (req, res) => {
+  const match = getMatch(req);
 
   if (!match) {
-    return res
-      .status(404)
-      .json({
-        error:
-          "match not found",
-      });
+    return res.status(404).json({
+      error: 'match not found',
+    });
   }
 
   advanceMatch(match);
 
   if (
     match.phase ===
-    "finished"
+    'finished'
   ) {
     return res.json(
       snapshot(match)
@@ -672,7 +561,7 @@ app.post("/api/matchmaking/timeout", (req, res) => {
 
   if (
     match.phase !==
-      "racing" ||
+      'racing' ||
     !match.firstSolverId ||
     !match.deadlineAt
   ) {
@@ -704,12 +593,8 @@ app.post("/api/matchmaking/timeout", (req, res) => {
         match.firstSolverId
     );
 
-  /*
-   * Both solved.
-   */
   if (
-    second?.solvedAt !==
-    null
+    second?.solvedAt !== null
   ) {
     const firstTime =
       first?.solveTimeMs ??
@@ -720,9 +605,846 @@ app.post("/api/matchmaking/timeout", (req, res) => {
       Number.POSITIVE_INFINITY;
 
     match.phase =
-      "finished";
+      'finished';
 
-    if (second) {
+    match.winnerId =
+      secondTime < firstTime
+        ? second.id
+        : first?.id ?? null;
+
+    match.loserId =
+      secondTime < firstTime
+        ? first?.id ?? null
+        : second.id;
+
+    return res.json(
+      snapshot(match)
+    );
+  }
+
+  match.phase =
+    'finished';
+
+  match.winnerId =
+    first?.id ?? null;
+
+  match.loserId =
+    second?.id ?? null;
+
+  return res.json(
+    snapshot(match)
+  );
+});
+
+// -----------------------------------------------------------------------------
+// Tournament LEAVE
+// -----------------------------------------------------------------------------
+app.post('/api/matchmaking/leave', (req, res) => {
+  queue.delete(
+    String(
+      req.body?.playerId ||
+        ''
+    )
+  );
+
+  return res.json({
+    ok: true,
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Twist League /api/twist-league/*
+// Completely isolated from Tournament matchmaking.
+// -----------------------------------------------------------------------------
+
+const twistLeagueQueue =
+  new Map();
+
+const twistLeagueMatches =
+  new Map();
+
+function findActiveTwistMatchByPlayerId(
+  playerId
+) {
+  return findActiveMatchByPlayerId(
+    playerId,
+    twistLeagueMatches
+  );
+}
+
+function advanceTwistLeagueMatch(
+  match
+) {
+  if (
+    match.phase === 'ready' &&
+    match.raceStartAt !== null &&
+    Date.now() >=
+      match.raceStartAt
+  ) {
+    match.phase =
+      'racing';
+
+    for (
+      const player
+      of match.players
+    ) {
+      if (
+        player.startedAt ===
+        null
+      ) {
+        player.startedAt =
+          match.raceStartAt;
+      }
+    }
+  }
+
+  return match;
+}
+
+function twistLeagueSnapshot(
+  match
+) {
+  advanceTwistLeagueMatch(
+    match
+  );
+
+  return {
+    ...match,
+
+    players:
+      match.players.map(
+        (player) => ({
+          ...player,
+        })
+      ),
+  };
+}
+
+function getTwistLeagueMatch(
+  req
+) {
+  const id = String(
+    req.body?.matchId ??
+      req.query?.matchId ??
+      ''
+  );
+
+  return twistLeagueMatches.get(
+    id
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Twist League DEBUG
+// -----------------------------------------------------------------------------
+app.get(
+  '/api/twist-league/debug',
+  (_req, res) => {
+    res.json({
+      ok: true,
+
+      queuedPlayers:
+        [
+          ...twistLeagueQueue.values()
+        ].map(
+          (entry) => ({
+            playerId:
+              entry.playerId,
+
+            username:
+              entry.username,
+          })
+        ),
+
+      activeMatches:
+        [
+          ...twistLeagueMatches.values()
+        ].map(
+          (match) => ({
+            id: match.id,
+
+            phase:
+              match.phase,
+
+            players:
+              match.players.map(
+                (player) => ({
+                  id:
+                    player.id,
+
+                  username:
+                    player.username,
+
+                  ready:
+                    player.ready,
+                })
+              ),
+          })
+        ),
+    });
+  }
+);
+
+// -----------------------------------------------------------------------------
+// Twist League JOIN
+// -----------------------------------------------------------------------------
+app.post(
+  '/api/twist-league/join',
+  (req, res) => {
+    const playerId =
+      String(
+        req.body?.playerId ||
+          randomUUID()
+      );
+
+    const username =
+      normalizeUsername(
+        req.body?.username
+      );
+
+    const existing =
+      findActiveTwistMatchByPlayerId(
+        playerId
+      );
+
+    if (existing) {
+      const me =
+        existing.players.find(
+          (player) =>
+            player.id ===
+            playerId
+        );
+
+      if (me) {
+        me.username =
+          username;
+      }
+
+      return res.json({
+        status:
+          'matched',
+
+        playerId,
+
+        players: 2,
+
+        capacity: 2,
+
+        match:
+          twistLeagueSnapshot(
+            existing
+          ),
+      });
+    }
+
+    for (
+      const [
+        key,
+        entry
+      ] of twistLeagueQueue
+    ) {
+      if (
+        entry.playerId ===
+        playerId
+      ) {
+        twistLeagueQueue.delete(
+          key
+        );
+      }
+    }
+
+    const opponent =
+      [
+        ...twistLeagueQueue.entries()
+      ].find(
+        ([, entry]) =>
+          entry.playerId !==
+          playerId
+      );
+
+    if (!opponent) {
+      twistLeagueQueue.set(
+        playerId,
+        {
+          playerId,
+          username,
+        }
+      );
+
+      return res.json({
+        status:
+          'searching',
+
+        playerId,
+
+        players: 1,
+
+        capacity: 2,
+      });
+    }
+
+    twistLeagueQueue.delete(
+      opponent[0]
+    );
+
+    const match = {
+      id:
+        randomUUID(),
+
+      format:
+        'BO3',
+
+      capacity: 2,
+
+      phase:
+        'ready',
+
+      scramble:
+        generateScramble(),
+
+      raceStartAt:
+        null,
+
+      firstSolverId:
+        null,
+
+      deadlineAt:
+        null,
+
+      winnerId:
+        null,
+
+      loserId:
+        null,
+
+      players: [
+        {
+          id:
+            opponent[1]
+              .playerId,
+
+          username:
+            opponent[1]
+              .username,
+
+          ready:
+            false,
+
+          startedAt:
+            null,
+
+          solvedAt:
+            null,
+
+          solveTimeMs:
+            null,
+        },
+
+        {
+          id:
+            playerId,
+
+          username,
+
+          ready:
+            false,
+
+          startedAt:
+            null,
+
+          solvedAt:
+            null,
+
+          solveTimeMs:
+            null,
+        },
+      ],
+    };
+
+    twistLeagueMatches.set(
+      match.id,
+      match
+    );
+
+    return res.json({
+      status:
+        'matched',
+
+      playerId,
+
+      players: 2,
+
+      capacity: 2,
+
+      match:
+        twistLeagueSnapshot(
+          match
+        ),
+    });
+  }
+);
+
+// -----------------------------------------------------------------------------
+// Twist League STATE
+// -----------------------------------------------------------------------------
+app.get(
+  '/api/twist-league/state',
+  (req, res) => {
+    const match =
+      getTwistLeagueMatch(
+        req
+      );
+
+    if (!match) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'twist league match not found',
+        });
+    }
+
+    return res.json(
+      twistLeagueSnapshot(
+        match
+      )
+    );
+  }
+);
+
+// -----------------------------------------------------------------------------
+// Twist League READY
+// -----------------------------------------------------------------------------
+app.post(
+  '/api/twist-league/ready',
+  (req, res) => {
+    const match =
+      getTwistLeagueMatch(
+        req
+      );
+
+    const playerId =
+      String(
+        req.body?.playerId ||
+          ''
+      );
+
+    const player =
+      match?.players.find(
+        (p) =>
+          p.id ===
+          playerId
+      );
+
+    if (
+      !match ||
+      !player
+    ) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'twist league match/player not found',
+        });
+    }
+
+    player.ready =
+      true;
+
+    return res.json(
+      twistLeagueSnapshot(
+        match
+      )
+    );
+  }
+);
+
+// -----------------------------------------------------------------------------
+// Twist League START
+// -----------------------------------------------------------------------------
+app.post(
+  '/api/twist-league/start',
+  (req, res) => {
+    const match =
+      getTwistLeagueMatch(
+        req
+      );
+
+    const playerId =
+      String(
+        req.body?.playerId ||
+          ''
+      );
+
+    const player =
+      match?.players.find(
+        (p) =>
+          p.id ===
+          playerId
+      );
+
+    if (
+      !match ||
+      !player
+    ) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'twist league match/player not found',
+        });
+    }
+
+    if (
+      match.players.length !==
+      2
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            'twist league requires exactly 2 players',
+        });
+    }
+
+    if (
+      !match.players.every(
+        (p) =>
+          p.ready
+      )
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            'both Twist League players must be ready',
+        });
+    }
+
+    if (
+      match.raceStartAt ===
+      null
+    ) {
+      match.raceStartAt =
+        Date.now() +
+        3000;
+    }
+
+    return res.json(
+      twistLeagueSnapshot(
+        match
+      )
+    );
+  }
+);
+
+// -----------------------------------------------------------------------------
+// Twist League SOLVE
+// -----------------------------------------------------------------------------
+app.post(
+  '/api/twist-league/solve',
+  (req, res) => {
+    const match =
+      getTwistLeagueMatch(
+        req
+      );
+
+    const playerId =
+      String(
+        req.body?.playerId ||
+          ''
+      );
+
+    const player =
+      match?.players.find(
+        (p) =>
+          p.id ===
+          playerId
+      );
+
+    if (
+      !match ||
+      !player
+    ) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'twist league match/player not found',
+        });
+    }
+
+    advanceTwistLeagueMatch(
+      match
+    );
+
+    if (
+      match.phase !==
+        'racing' ||
+      player.solvedAt !==
+        null
+    ) {
+      return res.json(
+        twistLeagueSnapshot(
+          match
+        )
+      );
+    }
+
+    const now =
+      Date.now();
+
+    const requestedSolvedAt =
+      Number(
+        req.body?.solvedAt
+      );
+
+    const requestedElapsedMs =
+      Number(
+        req.body?.elapsedMs
+      );
+
+    const acceptedSolvedAt =
+      Math.min(
+        Number.isFinite(
+          requestedSolvedAt
+        )
+          ? requestedSolvedAt
+          : now,
+
+        now
+      );
+
+    const startAt =
+      player.startedAt ??
+      match.raceStartAt ??
+      now;
+
+    const calculated =
+      Math.max(
+        1,
+
+        acceptedSolvedAt -
+          startAt
+      );
+
+    const clientElapsed =
+      Number.isFinite(
+        requestedElapsedMs
+      ) &&
+      requestedElapsedMs >
+        0
+        ? Math.round(
+            requestedElapsedMs
+          )
+        : 0;
+
+    const solveTimeMs =
+      Math.max(
+        1,
+
+        clientElapsed >
+          0
+          ? clientElapsed
+          : calculated
+      );
+
+    if (
+      match.deadlineAt !==
+        null &&
+      match.firstSolverId !==
+        player.id &&
+      acceptedSolvedAt >
+        match.deadlineAt
+    ) {
+      const first =
+        match.players.find(
+          (p) =>
+            p.id ===
+            match.firstSolverId
+        );
+
+      match.phase =
+        'finished';
+
+      match.winnerId =
+        first?.id ??
+        null;
+
+      match.loserId =
+        player.id;
+
+      return res.json(
+        twistLeagueSnapshot(
+          match
+        )
+      );
+    }
+
+    player.startedAt =
+      startAt;
+
+    player.solvedAt =
+      acceptedSolvedAt;
+
+    player.solveTimeMs =
+      solveTimeMs;
+
+    if (
+      match.firstSolverId ===
+      null
+    ) {
+      match.firstSolverId =
+        player.id;
+
+      match.deadlineAt =
+        acceptedSolvedAt +
+        15000;
+
+      return res.json(
+        twistLeagueSnapshot(
+          match
+        )
+      );
+    }
+
+    const first =
+      match.players.find(
+        (p) =>
+          p.id ===
+          match.firstSolverId
+      );
+
+    if (
+      !first ||
+      first.solveTimeMs ==
+        null
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            'first solver state is incomplete',
+        });
+    }
+
+    const secondTime =
+      player.solveTimeMs;
+
+    const firstTime =
+      first.solveTimeMs;
+
+    match.phase =
+      'finished';
+
+    match.winnerId =
+      secondTime <
+      firstTime
+        ? player.id
+        : first.id;
+
+    match.loserId =
+      secondTime <
+      firstTime
+        ? first.id
+        : player.id;
+
+    return res.json(
+      twistLeagueSnapshot(
+        match
+      )
+    );
+  }
+);
+
+// -----------------------------------------------------------------------------
+// Twist League TIMEOUT
+// -----------------------------------------------------------------------------
+app.post(
+  '/api/twist-league/timeout',
+  (req, res) => {
+    const match =
+      getTwistLeagueMatch(
+        req
+      );
+
+    if (!match) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'twist league match not found',
+        });
+    }
+
+    advanceTwistLeagueMatch(
+      match
+    );
+
+    if (
+      match.phase ===
+      'finished'
+    ) {
+      return res.json(
+        twistLeagueSnapshot(
+          match
+        )
+      );
+    }
+
+    if (
+      match.phase !==
+        'racing' ||
+      !match.firstSolverId ||
+      !match.deadlineAt
+    ) {
+      return res.json(
+        twistLeagueSnapshot(
+          match
+        )
+      );
+    }
+
+    if (
+      Date.now() <
+      match.deadlineAt
+    ) {
+      return res.json(
+        twistLeagueSnapshot(
+          match
+        )
+      );
+    }
+
+    const first =
+      match.players.find(
+        (p) =>
+          p.id ===
+          match.firstSolverId
+      );
+
+    const second =
+      match.players.find(
+        (p) =>
+          p.id !==
+          match.firstSolverId
+      );
+
+    if (
+      second?.solvedAt !==
+      null
+    ) {
+      const firstTime =
+        first?.solveTimeMs ??
+        Number.POSITIVE_INFINITY;
+
+      const secondTime =
+        second?.solveTimeMs ??
+        Number.POSITIVE_INFINITY;
+
+      match.phase =
+        'finished';
+
       match.winnerId =
         secondTime <
         firstTime
@@ -736,58 +1458,58 @@ app.post("/api/matchmaking/timeout", (req, res) => {
           ? first?.id ??
             null
           : second.id;
+
+      return res.json(
+        twistLeagueSnapshot(
+          match
+        )
+      );
     }
 
+    match.phase =
+      'finished';
+
+    match.winnerId =
+      first?.id ??
+      null;
+
+    match.loserId =
+      second?.id ??
+      null;
+
     return res.json(
-      snapshot(match)
+      twistLeagueSnapshot(
+        match
+      )
     );
   }
+);
 
-  /*
-   * Only first player solved.
-   */
-  match.phase =
-    "finished";
+// -----------------------------------------------------------------------------
+// Twist League LEAVE
+// -----------------------------------------------------------------------------
+app.post(
+  '/api/twist-league/leave',
+  (req, res) => {
+    twistLeagueQueue.delete(
+      String(
+        req.body?.playerId ||
+          ''
+      )
+    );
 
-  match.winnerId =
-    first?.id ?? null;
+    return res.json({
+      ok: true,
+    });
+  }
+);
 
-  match.loserId =
-    second?.id ?? null;
-
-  res.json(
-    snapshot(match)
-  );
-});
-
-/*
-|--------------------------------------------------------------------------
-| LEAVE QUEUE
-|--------------------------------------------------------------------------
-*/
-
-app.post("/api/matchmaking/leave", (req, res) => {
-  queue.delete(
-    String(
-      req.body?.playerId ||
-        ""
-    )
-  );
-
-  res.json({
-    ok: true,
-  });
-});
-
-/*
-|--------------------------------------------------------------------------
-| START SERVER
-|--------------------------------------------------------------------------
-*/
-
+// -----------------------------------------------------------------------------
+// Start
+// -----------------------------------------------------------------------------
 app.listen(
   PORT,
-  "0.0.0.0",
+  '0.0.0.0',
   () => {
     console.log(
       `[api] CubePulse public server listening on ${PORT}`

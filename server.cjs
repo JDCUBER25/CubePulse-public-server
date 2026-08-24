@@ -359,12 +359,10 @@ app.post(
       players: [
         {
           id:
-            opponent[1]
-              .playerId,
+            opponent[1].playerId,
 
           username:
-            opponent[1]
-              .username,
+            opponent[1].username,
 
           ready:
             false,
@@ -1755,20 +1753,17 @@ app.post(
 // Same match ID
 // Same 2 players
 // New scramble
-// Reset only the current game state
+// Safe when both clients call at nearly the same time.
 // -----------------------------------------------------------------------------
 app.post(
   '/api/twist-league/next-game',
   (req, res) => {
     const match =
-      getTwistLeagueMatch(
-        req
-      );
+      getTwistLeagueMatch(req);
 
     const playerId =
       String(
-        req.body?.playerId ||
-          ''
+        req.body?.playerId || ''
       );
 
     if (!match) {
@@ -1783,8 +1778,7 @@ app.post(
     const player =
       match.players.find(
         (p) =>
-          p.id ===
-          playerId
+          p.id === playerId
       );
 
     if (!player) {
@@ -1796,6 +1790,40 @@ app.post(
         });
     }
 
+    // -------------------------------------------------------------------------
+    // Both phones can call this endpoint.
+    //
+    // First phone:
+    // finished -> ready
+    //
+    // Second phone:
+    // already ready -> return the SAME match.
+    //
+    // This prevents the second player from being disconnected.
+    // -------------------------------------------------------------------------
+    if (
+      match.phase === 'ready' &&
+      match.raceStartAt === null &&
+      match.firstSolverId === null &&
+      match.deadlineAt === null &&
+      match.winnerId === null &&
+      match.loserId === null &&
+      match.players.every(
+        (p) =>
+          p.ready === false &&
+          p.startedAt === null &&
+          p.solvedAt === null &&
+          p.solveTimeMs === null
+      )
+    ) {
+      return res.json(
+        twistLeagueSnapshot(
+          match
+        )
+      );
+    }
+
+    // Current game must be finished.
     if (
       match.phase !==
       'finished'
@@ -1808,9 +1836,10 @@ app.post(
         });
     }
 
-    // Keep the SAME match.id.
-    // Keep the SAME two players.
-    // Reset only the current game.
+    // IMPORTANT:
+    // Do not create a new match.
+    // Keep the same match.id and the same two players.
+    // Only reset the current game state.
 
     match.scramble =
       generateScramble();

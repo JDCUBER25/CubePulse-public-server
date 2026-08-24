@@ -13,10 +13,17 @@ app.use((req, res, next) => {
   const origin = req.headers.origin;
 
   if (origin) {
-    res.header('Access-Control-Allow-Origin', origin);
+    res.header(
+      'Access-Control-Allow-Origin',
+      origin
+    );
   }
 
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header(
+    'Access-Control-Allow-Methods',
+    'GET, POST, OPTIONS'
+  );
+
   res.header(
     'Access-Control-Allow-Headers',
     'Origin, X-Requested-With, Content-Type, Accept, Authorization'
@@ -33,31 +40,61 @@ app.use((req, res, next) => {
 // Helpers
 // -----------------------------------------------------------------------------
 function normalizeScramble(value) {
-  return String(value ?? '').trim().replace(/\s+/g, ' ');
+  return String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ');
 }
 
 function normalizeUsername(value) {
-  const username = String(value ?? '').trim().replace(/\s+/g, ' ');
+  const username = String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ');
+
   return username.slice(0, 20) || 'Player';
 }
 
 function generateScramble(length = 20) {
-  const faces = ['R', 'L', 'U', 'D', 'F', 'B'];
-  const suffixes = ['', "'", '2'];
+  const faces = [
+    'R',
+    'L',
+    'U',
+    'D',
+    'F',
+    'B',
+  ];
+
+  const suffixes = [
+    '',
+    "'",
+    '2',
+  ];
+
   const result = [];
   let lastFace = '';
 
   while (result.length < length) {
-    const face = faces[Math.floor(Math.random() * faces.length)];
+    const face =
+      faces[
+        Math.floor(
+          Math.random() * faces.length
+        )
+      ];
 
     if (face === lastFace) {
       continue;
     }
 
     const suffix =
-      suffixes[Math.floor(Math.random() * suffixes.length)];
+      suffixes[
+        Math.floor(
+          Math.random() * suffixes.length
+        )
+      ];
 
-    result.push(face + suffix);
+    result.push(
+      face + suffix
+    );
+
     lastFace = face;
   }
 
@@ -71,11 +108,17 @@ function generateScramble(length = 20) {
 const queue = new Map();
 const matches = new Map();
 
-function findActiveMatchByPlayerId(playerId, store = matches) {
+function findActiveMatchByPlayerId(
+  playerId,
+  store = matches
+) {
   for (const match of store.values()) {
     if (
       match.phase !== 'finished' &&
-      match.players.some((player) => player.id === playerId)
+      match.players.some(
+        (player) =>
+          player.id === playerId
+      )
     ) {
       return match;
     }
@@ -88,13 +131,19 @@ function advanceMatch(match) {
   if (
     match.phase === 'ready' &&
     match.raceStartAt !== null &&
-    Date.now() >= match.raceStartAt
+    Date.now() >=
+      match.raceStartAt
   ) {
     match.phase = 'racing';
 
-    for (const player of match.players) {
-      if (player.startedAt === null) {
-        player.startedAt = match.raceStartAt;
+    for (
+      const player of match.players
+    ) {
+      if (
+        player.startedAt === null
+      ) {
+        player.startedAt =
+          match.raceStartAt;
       }
     }
   }
@@ -107,7 +156,13 @@ function snapshot(match) {
 
   return {
     ...match,
-    players: match.players.map((player) => ({ ...player })),
+
+    players:
+      match.players.map(
+        (player) => ({
+          ...player,
+        })
+      ),
   };
 }
 
@@ -121,331 +176,536 @@ function getMatch(req) {
   return matches.get(id);
 }
 
-app.get('/api/health', (_req, res) => {
-  res.json({
-    ok: true,
-    service: 'cubepulse-matchmaking',
-    timestamp: Date.now(),
-  });
-});
+app.get(
+  '/api/health',
+  (_req, res) => {
+    res.json({
+      ok: true,
+      service:
+        'cubepulse-matchmaking',
+      timestamp: Date.now(),
+    });
+  }
+);
 
-app.get('/api/matchmaking/debug', (_req, res) => {
-  res.json({
-    ok: true,
+app.get(
+  '/api/matchmaking/debug',
+  (_req, res) => {
+    res.json({
+      ok: true,
 
-    queuedPlayers: [...queue.values()].map((entry) => ({
-      playerId: entry.playerId,
-      username: entry.username,
-    })),
+      queuedPlayers:
+        [...queue.values()].map(
+          (entry) => ({
+            playerId:
+              entry.playerId,
 
-    activeMatches: [...matches.values()].map((match) => ({
-      id: match.id,
-      phase: match.phase,
+            username:
+              entry.username,
+          })
+        ),
 
-      players: match.players.map((player) => ({
-        id: player.id,
-        username: player.username,
-        ready: player.ready,
-      })),
-    })),
-  });
-});
+      activeMatches:
+        [...matches.values()].map(
+          (match) => ({
+            id: match.id,
+
+            phase:
+              match.phase,
+
+            players:
+              match.players.map(
+                (player) => ({
+                  id:
+                    player.id,
+
+                  username:
+                    player.username,
+
+                  ready:
+                    player.ready,
+                })
+              ),
+          })
+        ),
+    });
+  }
+);
 
 // -----------------------------------------------------------------------------
 // Tournament JOIN / MATCHMAKING
 // -----------------------------------------------------------------------------
-app.post('/api/matchmaking/join', (req, res) => {
-  const playerId = String(
-    req.body?.playerId || randomUUID()
-  );
+app.post(
+  '/api/matchmaking/join',
+  (req, res) => {
+    const playerId =
+      String(
+        req.body?.playerId ||
+          randomUUID()
+      );
 
-  const username = normalizeUsername(
-    req.body?.username
-  );
+    const username =
+      normalizeUsername(
+        req.body?.username
+      );
 
-  const existing = findActiveMatchByPlayerId(
-    playerId,
-    matches
-  );
+    const existing =
+      findActiveMatchByPlayerId(
+        playerId,
+        matches
+      );
 
-  if (existing) {
-    const me = existing.players.find(
-      (player) => player.id === playerId
+    if (existing) {
+      const me =
+        existing.players.find(
+          (player) =>
+            player.id ===
+            playerId
+        );
+
+      if (me) {
+        me.username =
+          username;
+      }
+
+      return res.json({
+        status:
+          'matched',
+
+        playerId,
+
+        match:
+          snapshot(existing),
+      });
+    }
+
+    const requested =
+      normalizeScramble(
+        req.body?.scramble
+      );
+
+    const scramble =
+      requested ||
+      generateScramble();
+
+    for (
+      const [key, entry] of queue
+    ) {
+      if (
+        entry.playerId ===
+        playerId
+      ) {
+        queue.delete(key);
+      }
+    }
+
+    const opponent =
+      [
+        ...queue.entries()
+      ].find(
+        ([, entry]) =>
+          entry.playerId !==
+          playerId
+      );
+
+    if (!opponent) {
+      queue.set(
+        playerId,
+        {
+          playerId,
+          username,
+          scramble,
+        }
+      );
+
+      return res.json({
+        status:
+          'searching',
+
+        playerId,
+      });
+    }
+
+    queue.delete(
+      opponent[0]
     );
 
-    if (me) {
-      me.username = username;
-    }
+    const match = {
+      id:
+        randomUUID(),
+
+      scramble:
+        opponent[1].scramble ||
+        scramble,
+
+      phase:
+        'ready',
+
+      raceStartAt:
+        null,
+
+      firstSolverId:
+        null,
+
+      deadlineAt:
+        null,
+
+      winnerId:
+        null,
+
+      loserId:
+        null,
+
+      players: [
+        {
+          id:
+            opponent[1]
+              .playerId,
+
+          username:
+            opponent[1]
+              .username,
+
+          ready:
+            false,
+
+          startedAt:
+            null,
+
+          solvedAt:
+            null,
+
+          solveTimeMs:
+            null,
+        },
+
+        {
+          id:
+            playerId,
+
+          username,
+
+          ready:
+            false,
+
+          startedAt:
+            null,
+
+          solvedAt:
+            null,
+
+          solveTimeMs:
+            null,
+        },
+      ],
+    };
+
+    matches.set(
+      match.id,
+      match
+    );
 
     return res.json({
-      status: 'matched',
+      status:
+        'matched',
+
       playerId,
-      match: snapshot(existing),
+
+      match:
+        snapshot(match),
     });
   }
-
-  const requested = normalizeScramble(
-    req.body?.scramble
-  );
-
-  const scramble =
-    requested || generateScramble();
-
-  for (const [key, entry] of queue) {
-    if (entry.playerId === playerId) {
-      queue.delete(key);
-    }
-  }
-
-  const opponent = [...queue.entries()].find(
-    ([, entry]) =>
-      entry.playerId !== playerId
-  );
-
-  if (!opponent) {
-    queue.set(playerId, {
-      playerId,
-      username,
-      scramble,
-    });
-
-    return res.json({
-      status: 'searching',
-      playerId,
-    });
-  }
-
-  queue.delete(opponent[0]);
-
-  const match = {
-    id: randomUUID(),
-
-    scramble:
-      opponent[1].scramble ||
-      scramble,
-
-    phase: 'ready',
-
-    raceStartAt: null,
-
-    firstSolverId: null,
-
-    deadlineAt: null,
-
-    winnerId: null,
-
-    loserId: null,
-
-    players: [
-      {
-        id: opponent[1].playerId,
-        username: opponent[1].username,
-        ready: false,
-        startedAt: null,
-        solvedAt: null,
-        solveTimeMs: null,
-      },
-
-      {
-        id: playerId,
-        username,
-        ready: false,
-        startedAt: null,
-        solvedAt: null,
-        solveTimeMs: null,
-      },
-    ],
-  };
-
-  matches.set(match.id, match);
-
-  console.log(
-    `[matchmaking] matched ${match.players[0].username} vs ${match.players[1].username} match=${match.id}`
-  );
-
-  return res.json({
-    status: 'matched',
-    playerId,
-    match: snapshot(match),
-  });
-});
+);
 
 // -----------------------------------------------------------------------------
 // Tournament MATCH STATE
 // -----------------------------------------------------------------------------
-app.get('/api/matchmaking/state', (req, res) => {
-  const match = getMatch(req);
+app.get(
+  '/api/matchmaking/state',
+  (req, res) => {
+    const match =
+      getMatch(req);
 
-  if (!match) {
-    return res.status(404).json({
-      error: 'match not found',
-    });
-  }
+    if (!match) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'match not found',
+        });
+    }
 
-  return res.json(
-    snapshot(match)
-  );
-});
-
-// -----------------------------------------------------------------------------
-// Tournament READY
-// -----------------------------------------------------------------------------
-app.post('/api/matchmaking/ready', (req, res) => {
-  const match = getMatch(req);
-
-  const playerId = String(
-    req.body?.playerId || ''
-  );
-
-  const player = match?.players.find(
-    (p) => p.id === playerId
-  );
-
-  if (!match || !player) {
-    return res.status(404).json({
-      error: 'match/player not found',
-    });
-  }
-
-  player.ready = true;
-
-  return res.json(
-    snapshot(match)
-  );
-});
-
-// -----------------------------------------------------------------------------
-// Tournament START
-// -----------------------------------------------------------------------------
-app.post('/api/matchmaking/start', (req, res) => {
-  const match = getMatch(req);
-
-  const playerId = String(
-    req.body?.playerId || ''
-  );
-
-  const player = match?.players.find(
-    (p) => p.id === playerId
-  );
-
-  if (!match || !player) {
-    return res.status(404).json({
-      error: 'match/player not found',
-    });
-  }
-
-  if (
-    !match.players.every(
-      (p) => p.ready
-    )
-  ) {
-    return res.status(409).json({
-      error: 'both players must be ready',
-    });
-  }
-
-  if (
-    match.raceStartAt === null
-  ) {
-    match.raceStartAt =
-      Date.now() + 3000;
-  }
-
-  return res.json(
-    snapshot(match)
-  );
-});
-
-// -----------------------------------------------------------------------------
-// Tournament SOLVE
-// -----------------------------------------------------------------------------
-app.post('/api/matchmaking/solve', (req, res) => {
-  const match = getMatch(req);
-
-  const playerId = String(
-    req.body?.playerId || ''
-  );
-
-  const player = match?.players.find(
-    (p) => p.id === playerId
-  );
-
-  if (!match || !player) {
-    return res.status(404).json({
-      error: 'match/player not found',
-    });
-  }
-
-  advanceMatch(match);
-
-  if (
-    match.phase !== 'racing' ||
-    player.solvedAt !== null
-  ) {
     return res.json(
       snapshot(match)
     );
   }
+);
 
-  const now = Date.now();
+// -----------------------------------------------------------------------------
+// Tournament READY
+// -----------------------------------------------------------------------------
+app.post(
+  '/api/matchmaking/ready',
+  (req, res) => {
+    const match =
+      getMatch(req);
 
-  const requestedSolvedAt =
-    Number(
-      req.body?.solvedAt
+    const playerId =
+      String(
+        req.body?.playerId ||
+          ''
+      );
+
+    const player =
+      match?.players.find(
+        (p) =>
+          p.id ===
+          playerId
+      );
+
+    if (
+      !match ||
+      !player
+    ) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'match/player not found',
+        });
+    }
+
+    player.ready =
+      true;
+
+    return res.json(
+      snapshot(match)
     );
+  }
+);
 
-  const requestedElapsedMs =
-    Number(
-      req.body?.elapsedMs
-    );
+// -----------------------------------------------------------------------------
+// Tournament START
+// -----------------------------------------------------------------------------
+app.post(
+  '/api/matchmaking/start',
+  (req, res) => {
+    const match =
+      getMatch(req);
 
-  const acceptedSolvedAt =
-    Math.min(
-      Number.isFinite(
-        requestedSolvedAt
+    const playerId =
+      String(
+        req.body?.playerId ||
+          ''
+      );
+
+    const player =
+      match?.players.find(
+        (p) =>
+          p.id ===
+          playerId
+      );
+
+    if (
+      !match ||
+      !player
+    ) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'match/player not found',
+        });
+    }
+
+    if (
+      !match.players.every(
+        (p) =>
+          p.ready
       )
-        ? requestedSolvedAt
-        : now,
-      now
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            'both players must be ready',
+        });
+    }
+
+    if (
+      match.raceStartAt ===
+      null
+    ) {
+      match.raceStartAt =
+        Date.now() +
+        3000;
+    }
+
+    return res.json(
+      snapshot(match)
     );
+  }
+);
 
-  const startAt =
-    player.startedAt ??
-    match.raceStartAt ??
-    now;
+// -----------------------------------------------------------------------------
+// Tournament SOLVE
+// -----------------------------------------------------------------------------
+app.post(
+  '/api/matchmaking/solve',
+  (req, res) => {
+    const match =
+      getMatch(req);
 
-  const calculated =
-    Math.max(
-      1,
-      acceptedSolvedAt -
-        startAt
-    );
+    const playerId =
+      String(
+        req.body?.playerId ||
+          ''
+      );
 
-  const clientElapsed =
-    Number.isFinite(
-      requestedElapsedMs
-    ) &&
-    requestedElapsedMs > 0
-      ? Math.round(
-          requestedElapsedMs
+    const player =
+      match?.players.find(
+        (p) =>
+          p.id ===
+          playerId
+      );
+
+    if (
+      !match ||
+      !player
+    ) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'match/player not found',
+        });
+    }
+
+    advanceMatch(match);
+
+    if (
+      match.phase !==
+        'racing' ||
+      player.solvedAt !==
+        null
+    ) {
+      return res.json(
+        snapshot(match)
+      );
+    }
+
+    const now =
+      Date.now();
+
+    const requestedSolvedAt =
+      Number(
+        req.body?.solvedAt
+      );
+
+    const requestedElapsedMs =
+      Number(
+        req.body?.elapsedMs
+      );
+
+    const acceptedSolvedAt =
+      Math.min(
+        Number.isFinite(
+          requestedSolvedAt
         )
-      : 0;
+          ? requestedSolvedAt
+          : now,
 
-  const solveTimeMs =
-    Math.max(
-      1,
-      clientElapsed > 0
-        ? clientElapsed
-        : calculated
-    );
+        now
+      );
 
-  if (
-    match.deadlineAt !== null &&
-    match.firstSolverId !==
-      player.id &&
-    acceptedSolvedAt >
-      match.deadlineAt
-  ) {
+    const startAt =
+      player.startedAt ??
+      match.raceStartAt ??
+      now;
+
+    const calculated =
+      Math.max(
+        1,
+        acceptedSolvedAt -
+          startAt
+      );
+
+    const clientElapsed =
+      Number.isFinite(
+        requestedElapsedMs
+      ) &&
+      requestedElapsedMs >
+        0
+        ? Math.round(
+            requestedElapsedMs
+          )
+        : 0;
+
+    const solveTimeMs =
+      Math.max(
+        1,
+
+        clientElapsed >
+          0
+          ? clientElapsed
+          : calculated
+      );
+
+    if (
+      match.deadlineAt !==
+        null &&
+      match.firstSolverId !==
+        player.id &&
+      acceptedSolvedAt >
+        match.deadlineAt
+    ) {
+      const first =
+        match.players.find(
+          (p) =>
+            p.id ===
+            match.firstSolverId
+        );
+
+      match.phase =
+        'finished';
+
+      match.winnerId =
+        first?.id ??
+        null;
+
+      match.loserId =
+        player.id;
+
+      return res.json(
+        snapshot(match)
+      );
+    }
+
+    player.startedAt =
+      startAt;
+
+    player.solvedAt =
+      acceptedSolvedAt;
+
+    player.solveTimeMs =
+      solveTimeMs;
+
+    if (
+      match.firstSolverId ===
+      null
+    ) {
+      match.firstSolverId =
+        player.id;
+
+      match.deadlineAt =
+        acceptedSolvedAt +
+        15000;
+
+      return res.json(
+        snapshot(match)
+      );
+    }
+
     const first =
       match.players.find(
         (p) =>
@@ -453,215 +713,214 @@ app.post('/api/matchmaking/solve', (req, res) => {
           match.firstSolverId
       );
 
+    if (
+      !first ||
+      first.solveTimeMs ==
+        null
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            'first solver state is incomplete',
+        });
+    }
+
+    const secondTime =
+      player.solveTimeMs;
+
+    const firstTime =
+      first.solveTimeMs;
+
     match.phase =
       'finished';
 
     match.winnerId =
-      first?.id ?? null;
+      secondTime <
+      firstTime
+        ? player.id
+        : first.id;
 
     match.loserId =
-      player.id;
+      secondTime <
+      firstTime
+        ? first.id
+        : player.id;
 
     return res.json(
       snapshot(match)
     );
   }
-
-  player.startedAt =
-    startAt;
-
-  player.solvedAt =
-    acceptedSolvedAt;
-
-  player.solveTimeMs =
-    solveTimeMs;
-
-  if (
-    match.firstSolverId ===
-    null
-  ) {
-    match.firstSolverId =
-      player.id;
-
-    match.deadlineAt =
-      acceptedSolvedAt +
-      15000;
-
-    return res.json(
-      snapshot(match)
-    );
-  }
-
-  const first =
-    match.players.find(
-      (p) =>
-        p.id ===
-        match.firstSolverId
-    );
-
-  if (
-    !first ||
-    first.solveTimeMs ==
-      null
-  ) {
-    return res
-      .status(409)
-      .json({
-        error:
-          'first solver state is incomplete',
-      });
-  }
-
-  const secondTime =
-    player.solveTimeMs;
-
-  const firstTime =
-    first.solveTimeMs;
-
-  match.phase =
-    'finished';
-
-  match.winnerId =
-    secondTime < firstTime
-      ? player.id
-      : first.id;
-
-  match.loserId =
-    secondTime < firstTime
-      ? first.id
-      : player.id;
-
-  return res.json(
-    snapshot(match)
-  );
-});
+);
 
 // -----------------------------------------------------------------------------
 // Tournament TIMEOUT
 // -----------------------------------------------------------------------------
-app.post('/api/matchmaking/timeout', (req, res) => {
-  const match = getMatch(req);
+app.post(
+  '/api/matchmaking/timeout',
+  (req, res) => {
+    const match =
+      getMatch(req);
 
-  if (!match) {
-    return res.status(404).json({
-      error: 'match not found',
-    });
-  }
+    if (!match) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'match not found',
+        });
+    }
 
-  advanceMatch(match);
+    advanceMatch(match);
 
-  if (
-    match.phase ===
-    'finished'
-  ) {
-    return res.json(
-      snapshot(match)
-    );
-  }
+    if (
+      match.phase ===
+      'finished'
+    ) {
+      return res.json(
+        snapshot(match)
+      );
+    }
 
-  if (
-    match.phase !==
-      'racing' ||
-    !match.firstSolverId ||
-    !match.deadlineAt
-  ) {
-    return res.json(
-      snapshot(match)
-    );
-  }
+    if (
+      match.phase !==
+        'racing' ||
+      !match.firstSolverId ||
+      !match.deadlineAt
+    ) {
+      return res.json(
+        snapshot(match)
+      );
+    }
 
-  if (
-    Date.now() <
-    match.deadlineAt
-  ) {
-    return res.json(
-      snapshot(match)
-    );
-  }
+    if (
+      Date.now() <
+      match.deadlineAt
+    ) {
+      return res.json(
+        snapshot(match)
+      );
+    }
 
-  const first =
-    match.players.find(
-      (p) =>
-        p.id ===
-        match.firstSolverId
-    );
+    const first =
+      match.players.find(
+        (p) =>
+          p.id ===
+          match.firstSolverId
+      );
 
-  const second =
-    match.players.find(
-      (p) =>
-        p.id !==
-        match.firstSolverId
-    );
+    const second =
+      match.players.find(
+        (p) =>
+          p.id !==
+          match.firstSolverId
+      );
 
-  if (
-    second?.solvedAt !== null
-  ) {
-    const firstTime =
-      first?.solveTimeMs ??
-      Number.POSITIVE_INFINITY;
+    if (
+      second?.solvedAt !==
+      null
+    ) {
+      const firstTime =
+        first?.solveTimeMs ??
+        Number.POSITIVE_INFINITY;
 
-    const secondTime =
-      second?.solveTimeMs ??
-      Number.POSITIVE_INFINITY;
+      const secondTime =
+        second?.solveTimeMs ??
+        Number.POSITIVE_INFINITY;
+
+      match.phase =
+        'finished';
+
+      match.winnerId =
+        secondTime <
+        firstTime
+          ? second.id
+          : first?.id ??
+            null;
+
+      match.loserId =
+        secondTime <
+        firstTime
+          ? first?.id ??
+            null
+          : second.id;
+
+      return res.json(
+        snapshot(match)
+      );
+    }
 
     match.phase =
       'finished';
 
     match.winnerId =
-      secondTime < firstTime
-        ? second.id
-        : first?.id ?? null;
+      first?.id ??
+      null;
 
     match.loserId =
-      secondTime < firstTime
-        ? first?.id ?? null
-        : second.id;
+      second?.id ??
+      null;
 
     return res.json(
       snapshot(match)
     );
   }
-
-  match.phase =
-    'finished';
-
-  match.winnerId =
-    first?.id ?? null;
-
-  match.loserId =
-    second?.id ?? null;
-
-  return res.json(
-    snapshot(match)
-  );
-});
+);
 
 // -----------------------------------------------------------------------------
 // Tournament LEAVE
 // -----------------------------------------------------------------------------
-app.post('/api/matchmaking/leave', (req, res) => {
-  queue.delete(
-    String(
-      req.body?.playerId ||
-        ''
-    )
-  );
+app.post(
+  '/api/matchmaking/leave',
+  (req, res) => {
+    queue.delete(
+      String(
+        req.body?.playerId ||
+          ''
+      )
+    );
 
-  return res.json({
-    ok: true,
-  });
-});
+    return res.json({
+      ok: true,
+    });
+  }
+);
 
 // -----------------------------------------------------------------------------
-// Twist League /api/twist-league/*
+// Twist League /api/twist-league/* state
 // Completely isolated from Tournament matchmaking.
 // -----------------------------------------------------------------------------
-
 const twistLeagueQueue =
   new Map();
 
 const twistLeagueMatches =
   new Map();
+
+const TWIST_QUEUE_TTL_MS =
+  15000;
+
+function cleanupTwistLeagueQueue() {
+  const now =
+    Date.now();
+
+  for (
+    const [
+      key,
+      entry,
+    ] of twistLeagueQueue
+  ) {
+    if (
+      !entry.joinedAt ||
+      now -
+        entry.joinedAt >
+        TWIST_QUEUE_TTL_MS
+    ) {
+      twistLeagueQueue.delete(
+        key
+      );
+    }
+  }
+}
 
 function findActiveTwistMatchByPlayerId(
   playerId
@@ -676,8 +935,10 @@ function advanceTwistLeagueMatch(
   match
 ) {
   if (
-    match.phase === 'ready' &&
-    match.raceStartAt !== null &&
+    match.phase ===
+      'ready' &&
+    match.raceStartAt !==
+      null &&
     Date.now() >=
       match.raceStartAt
   ) {
@@ -685,8 +946,8 @@ function advanceTwistLeagueMatch(
       'racing';
 
     for (
-      const player
-      of match.players
+      const player of
+      match.players
     ) {
       if (
         player.startedAt ===
@@ -723,11 +984,12 @@ function twistLeagueSnapshot(
 function getTwistLeagueMatch(
   req
 ) {
-  const id = String(
-    req.body?.matchId ??
-      req.query?.matchId ??
-      ''
-  );
+  const id =
+    String(
+      req.body?.matchId ??
+        req.query?.matchId ??
+        ''
+    );
 
   return twistLeagueMatches.get(
     id
@@ -761,7 +1023,8 @@ app.get(
           ...twistLeagueMatches.values()
         ].map(
           (match) => ({
-            id: match.id,
+            id:
+              match.id,
 
             phase:
               match.phase,
@@ -791,6 +1054,8 @@ app.get(
 app.post(
   '/api/twist-league/join',
   (req, res) => {
+    cleanupTwistLeagueQueue();
+
     const playerId =
       String(
         req.body?.playerId ||
@@ -868,6 +1133,8 @@ app.post(
         {
           playerId,
           username,
+          joinedAt:
+            Date.now(),
         }
       );
 
@@ -920,12 +1187,10 @@ app.post(
       players: [
         {
           id:
-            opponent[1]
-              .playerId,
+            opponent[1].playerId,
 
           username:
-            opponent[1]
-              .username,
+            opponent[1].username,
 
           ready:
             false,
@@ -1491,12 +1756,38 @@ app.post(
 app.post(
   '/api/twist-league/leave',
   (req, res) => {
-    twistLeagueQueue.delete(
+    const playerId =
       String(
         req.body?.playerId ||
           ''
-      )
+      );
+
+    twistLeagueQueue.delete(
+      playerId
     );
+
+    for (
+      const [
+        matchId,
+        match,
+      ] of twistLeagueMatches
+    ) {
+      if (
+        match.phase !==
+          'finished' &&
+        match.players.some(
+          (p) =>
+            p.id ===
+            playerId
+        )
+      ) {
+        twistLeagueMatches.delete(
+          matchId
+        );
+
+        break;
+      }
+    }
 
     return res.json({
       ok: true,
@@ -1507,6 +1798,11 @@ app.post(
 // -----------------------------------------------------------------------------
 // Start
 // -----------------------------------------------------------------------------
+setInterval(
+  cleanupTwistLeagueQueue,
+  5000
+);
+
 app.listen(
   PORT,
   '0.0.0.0',

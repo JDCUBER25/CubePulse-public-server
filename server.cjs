@@ -1751,6 +1751,114 @@ app.post(
 );
 
 // -----------------------------------------------------------------------------
+// Twist League NEXT GAME
+// Same match ID
+// Same 2 players
+// New scramble
+// Reset only the current game state
+// -----------------------------------------------------------------------------
+app.post(
+  '/api/twist-league/next-game',
+  (req, res) => {
+    const match =
+      getTwistLeagueMatch(
+        req
+      );
+
+    const playerId =
+      String(
+        req.body?.playerId ||
+          ''
+      );
+
+    if (!match) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'twist league match not found',
+        });
+    }
+
+    const player =
+      match.players.find(
+        (p) =>
+          p.id ===
+          playerId
+      );
+
+    if (!player) {
+      return res
+        .status(403)
+        .json({
+          error:
+            'player is not part of this match',
+        });
+    }
+
+    if (
+      match.phase !==
+      'finished'
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            'current game is not finished',
+        });
+    }
+
+    // Keep the SAME match.id.
+    // Keep the SAME two players.
+    // Reset only the current game.
+
+    match.scramble =
+      generateScramble();
+
+    match.phase =
+      'ready';
+
+    match.raceStartAt =
+      null;
+
+    match.firstSolverId =
+      null;
+
+    match.deadlineAt =
+      null;
+
+    match.winnerId =
+      null;
+
+    match.loserId =
+      null;
+
+    for (
+      const p of
+      match.players
+    ) {
+      p.ready =
+        false;
+
+      p.startedAt =
+        null;
+
+      p.solvedAt =
+        null;
+
+      p.solveTimeMs =
+        null;
+    }
+
+    return res.json(
+      twistLeagueSnapshot(
+        match
+      )
+    );
+  }
+);
+
+// -----------------------------------------------------------------------------
 // Twist League LEAVE
 // -----------------------------------------------------------------------------
 app.post(

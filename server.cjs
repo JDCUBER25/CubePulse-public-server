@@ -583,6 +583,10 @@ app.post(
 
     advanceMatch(match);
 
+    if (playerId) {
+      touchTwistPlayer(match, playerId);
+    }
+
     if (
       match.phase ===
       'finished'
@@ -720,6 +724,15 @@ const TWIST_FINISH_WINDOW_MS =
 const TWIST_START_DELAY_MS =
   3000;
 
+// A player must keep sending heartbeat while inside an active bracket match.
+// This lets the server detect dead phones / lost network even when the phone
+// cannot call /leave. The remaining player then wins automatically.
+const TWIST_HEARTBEAT_INTERVAL_MS =
+  2000;
+
+const TWIST_DISCONNECT_TIMEOUT_MS =
+  8000;
+
 // -----------------------------------------------------------------------------
 // Twist queue cleanup
 // -----------------------------------------------------------------------------
@@ -838,6 +851,7 @@ function createTwistPlayer(
     finalMatchId: null,
     status: 'waiting',
     eliminated: false,
+    lastSeenAt: Date.now(),
   };
 }
 
@@ -876,6 +890,8 @@ function createTwistMatch({
     seriesWins,
     gameNumber: 1,
     seriesWinnerId: null,
+    forfeit: false,
+    forfeitedPlayerId: null,
     lastGameResult: null,
     players:
       players.map(
@@ -892,6 +908,9 @@ function createTwistMatch({
             null,
           solveTimeMs:
             null,
+          lastSeenAt:
+            player.lastSeenAt ??
+            Date.now(),
         })
       ),
   };
@@ -1693,7 +1712,13 @@ function forfeitTwistMatch(
     // that this player left/forfeited.
     exitingPlayer.ready =
       false;
+    exitingPlayer.lastSeenAt =
+      Date.now();
   }
+
+  match.forfeit = true;
+  match.forfeitedPlayerId =
+    exitingPlayerId;
 
   match.phase =
     'finished';
@@ -1866,6 +1891,101 @@ function resolveSemifinalExitWalkover(
     }
   }
 }
+
+// -----------------------------------------------------------------------------
+// Heartbeat + automatic disconnect forfeit
+// -----------------------------------------------------------------------------
+function touchTwistPlayer(match, playerId) {
+  const player = match?.players.find(
+    (p) => p.id === playerId
+  );
+
+  if (!player) return false;
+
+  const now = Date.now();
+  player.lastSeenAt = now;
+
+  const tournament =
+    getTwistTournamentForMatch(match);
+
+  const tournamentPlayer = tournament?.players.find(
+    (p) => p.id === playerId
+  );
+
+  if (tournamentPlayer) {
+    tournamentPlayer.lastSeenAt = now;
+  }
+
+  return true;
+}
+
+function resolveTwistDisconnects() {
+  const now = Date.now();
+
+  for (const match of twistLeagueMatches.values()) {
+    if (!match || match.phase === 'finished') continue;
+    if (!Array.isArray(match.players) || match.players.length !== 2) continue;
+
+    const stale = match.players.filter((player) => {
+      const lastSeen = Number(player.lastSeenAt || 0);
+      return lastSeen > 0 && now - lastSeen > TWIST_DISCONNECT_TIMEOUT_MS;
+    });
+
+    // Only resolve when exactly one player is stale. If both devices are gone,
+    // there is nobody to award the automatic win to yet.
+    if (stale.length !== 1) continue;
+
+    const exitingPlayerId = stale[0].id;
+    const livePlayer = match.players.find(
+      (player) => player.id !== exitingPlayerId
+    );
+
+    if (!livePlayer) continue;
+
+    forfeitTwistMatch(
+      match,
+      exitingPlayerId
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// HEARTBEAT
+// -----------------------------------------------------------------------------
+app.post(
+  '/api/twist-league/heartbeat',
+  (req, res) => {
+    const match =
+      getTwistLeagueMatch(req);
+
+    const playerId =
+      String(
+        req.body?.playerId || ''
+      );
+
+    if (!match) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'twist league match not found',
+        });
+    }
+
+    if (!touchTwistPlayer(match, playerId)) {
+      return res
+        .status(403)
+        .json({
+          error:
+            'player is not part of this match',
+        });
+    }
+
+    return res.json(
+      twistLeagueSnapshot(match)
+    );
+  }
+);
 
 // -----------------------------------------------------------------------------
 // DEBUG
@@ -2245,6 +2365,11 @@ app.get(
         req
       );
 
+    const playerId =
+      String(
+        req.body?.playerId || ''
+      );
+
     if (!match) {
       return res
         .status(404)
@@ -2297,6 +2422,8 @@ app.post(
             'twist league match/player not found',
         });
     }
+
+    touchTwistPlayer(match, playerId);
 
     if (
       match.phase !==
@@ -2356,6 +2483,8 @@ app.post(
             'twist league match/player not found',
         });
     }
+
+    touchTwistPlayer(match, playerId);
 
     if (
       match.players.length !==
@@ -2435,6 +2564,8 @@ app.post(
             'twist league match/player not found',
         });
     }
+
+    touchTwistPlayer(match, playerId);
 
     advanceTwistLeagueMatch(
       match
@@ -2836,6 +2967,8 @@ app.post(
         });
     }
 
+    touchTwistPlayer(match, playerId);
+
     if (
       match.seriesWinnerId
     ) {
@@ -2929,6 +3062,8 @@ app.post(
     ) {
       player.ready =
         false;
+      player.lastSeenAt =
+        Date.now();
 
       player.startedAt =
         null;
@@ -3084,6 +3219,11 @@ app.post(
 setInterval(
   cleanupTwistLeagueQueue,
   5000
+);
+
+setInterval(
+  resolveTwistDisconnects,
+  1000
 );
 
 app.listen(

@@ -359,10 +359,12 @@ app.post(
       players: [
         {
           id:
-            opponent[1].playerId,
+            opponent[1]
+              .playerId,
 
           username:
-            opponent[1].username,
+            opponent[1]
+              .username,
 
           ready:
             false,
@@ -886,73 +888,146 @@ app.post(
 
 // -----------------------------------------------------------------------------
 // Twist League /api/twist-league/* state
-// Completely isolated from Tournament matchmaking.
+// 4-player bracket:
+//   QF/1/2 slots -> Semifinal A + Semifinal B -> Final -> Champion
+//
+// Each semifinal/final remains a normal 2-player BO3 match, but the
+// tournament lobby waits for FOUR players before creating the bracket.
 // -----------------------------------------------------------------------------
-const twistLeagueQueue =
-  new Map();
+const twistLeagueQueue = new Map();
+const twistLeagueMatches = new Map();
+const twistLeagueTournaments = new Map();
 
-const twistLeagueMatches =
-  new Map();
-
-const TWIST_QUEUE_TTL_MS =
-  15000;
+const TWIST_QUEUE_TTL_MS = 15_000;
+const TWIST_PLAYER_CAPACITY = 4;
+const TWIST_SERIES_WINS = 3;
+const TWIST_FINISH_WINDOW_MS = 15_000;
+const TWIST_START_DELAY_MS = 3_000;
 
 function cleanupTwistLeagueQueue() {
-  const now =
-    Date.now();
+  const now = Date.now();
 
-  for (
-    const [
-      key,
-      entry,
-    ] of twistLeagueQueue
-  ) {
+  for (const [key, entry] of twistLeagueQueue) {
     if (
       !entry.joinedAt ||
-      now -
-        entry.joinedAt >
-        TWIST_QUEUE_TTL_MS
+      now - entry.joinedAt > TWIST_QUEUE_TTL_MS
     ) {
-      twistLeagueQueue.delete(
-        key
-      );
+      twistLeagueQueue.delete(key);
     }
   }
 }
 
-function findActiveTwistMatchByPlayerId(
-  playerId
-) {
-  return findActiveMatchByPlayerId(
-    playerId,
-    twistLeagueMatches
-  );
+function findActiveTwistMatchByPlayerId(playerId) {
+  for (const match of twistLeagueMatches.values()) {
+    if (
+      match.phase !== 'finished' &&
+      match.players.some((player) => player.id === playerId)
+    ) {
+      return match;
+    }
+  }
+
+  return undefined;
 }
 
-function advanceTwistLeagueMatch(
-  match
-) {
-  if (
-    match.phase ===
-      'ready' &&
-    match.raceStartAt !==
-      null &&
-    Date.now() >=
-      match.raceStartAt
-  ) {
-    match.phase =
-      'racing';
+function findTwistTournamentByPlayerId(playerId) {
+  for (const tournament of twistLeagueTournaments.values()) {
+    const player = tournament.players.find((p) => p.id === playerId);
+    if (player) return tournament;
+  }
 
-    for (
-      const player of
-      match.players
-    ) {
-      if (
-        player.startedAt ===
-        null
-      ) {
-        player.startedAt =
-          match.raceStartAt;
+  return undefined;
+}
+
+function createTwistPlayer(id, username, seed) {
+  return {
+    id,
+    username,
+    seed,
+    semFinalMatchId: null,
+    finalMatchId: null,
+    status: 'waiting',
+    eliminated: false,
+  };
+}
+
+function createTwistMatch({ tournamentId, stage, slot, players }) {
+  return {
+    id: randomUUID(),
+    tournamentId,
+    stage,
+    slot,
+    format: 'BO3',
+    capacity: 2,
+    phase: 'ready',
+    scramble: generateScramble(),
+    raceStartAt: null,
+    firstSolverId: null,
+    deadlineAt: null,
+    winnerId: null,
+    loserId: null,
+    seriesWins: {},
+    gameNumber: 1,
+    seriesWinnerId: null,
+    players: players.map((player) => ({
+      id: player.id,
+      username: player.username,
+      ready: false,
+      startedAt: null,
+      solvedAt: null,
+      solveTimeMs: null,
+    })),
+  };
+}
+
+function getTwistTournamentBracket(tournament) {
+  return {
+    tournamentId: tournament.id,
+    capacity: TWIST_PLAYER_CAPACITY,
+    joinedPlayers: tournament.players.length,
+    totalPlayers: TWIST_PLAYER_CAPACITY,
+    phase: tournament.phase,
+    championId: tournament.championId,
+    championName:
+      tournament.players.find(
+        (player) => player.id === tournament.championId
+      )?.username ?? null,
+    slots: tournament.players.map((player) => ({
+      seed: player.seed,
+      id: player.id,
+      username: player.username,
+      status: player.status,
+      eliminated: player.eliminated,
+      semifinalMatchId: player.semFinalMatchId,
+      finalMatchId: player.finalMatchId,
+    })),
+    semifinals: tournament.semifinals.map((semi) => ({
+      slot: semi.slot,
+      matchId: semi.matchId,
+      playerIds: [...semi.playerIds],
+      winnerId: semi.winnerId,
+      complete: semi.complete,
+    })),
+    final: {
+      matchId: tournament.finalMatchId,
+      playerIds: [...tournament.finalPlayerIds],
+      winnerId: tournament.championId,
+      complete: tournament.phase === 'finished',
+    },
+  };
+}
+
+function advanceTwistLeagueMatch(match) {
+  if (
+    match.phase === 'ready' &&
+    match.raceStartAt !== null &&
+    Date.now() >= match.raceStartAt
+  ) {
+    match.phase = 'racing';
+
+    for (const player of match.players) {
+      if (player.startedAt === null) {
+        player.startedAt = match.raceStartAt;
       }
     }
   }
@@ -960,38 +1035,248 @@ function advanceTwistLeagueMatch(
   return match;
 }
 
-function twistLeagueSnapshot(
-  match
-) {
-  advanceTwistLeagueMatch(
-    match
-  );
+function getTwistTournamentForMatch(match) {
+  return twistLeagueTournaments.get(match.tournamentId);
+}
+
+function twistLeagueSnapshot(match) {
+  advanceTwistLeagueMatch(match);
+
+  const tournament = getTwistTournamentForMatch(match);
 
   return {
     ...match,
-
-    players:
-      match.players.map(
-        (player) => ({
-          ...player,
-        })
-      ),
+    tournamentId: tournament?.id ?? match.tournamentId,
+    bracket: tournament
+      ? getTwistTournamentBracket(tournament)
+      : null,
+    players: match.players.map((player) => ({ ...player })),
   };
 }
 
-function getTwistLeagueMatch(
-  req
-) {
-  const id =
-    String(
-      req.body?.matchId ??
-        req.query?.matchId ??
-        ''
-    );
-
-  return twistLeagueMatches.get(
-    id
+function getTwistLeagueMatch(req) {
+  const id = String(
+    req.body?.matchId ??
+      req.query?.matchId ??
+      ''
   );
+
+  return twistLeagueMatches.get(id);
+}
+
+function assignSemifinalStatus(tournament, playerIds, matchId) {
+  for (const id of playerIds) {
+    const player = tournament.players.find((p) => p.id === id);
+    if (player) {
+      player.semFinalMatchId = matchId;
+      player.status = 'semifinal';
+    }
+  }
+}
+
+function createFourPlayerTwistTournament(entries) {
+  const players = entries.map((entry, index) =>
+    createTwistPlayer(
+      entry.playerId,
+      entry.username,
+      index + 1
+    )
+  );
+
+  const tournament = {
+    id: randomUUID(),
+    capacity: TWIST_PLAYER_CAPACITY,
+    phase: 'semifinals',
+    players,
+    semifinals: [
+      {
+        slot: 1,
+        matchId: null,
+        playerIds: [players[0].id, players[1].id],
+        winnerId: null,
+        complete: false,
+      },
+      {
+        slot: 2,
+        matchId: null,
+        playerIds: [players[2].id, players[3].id],
+        winnerId: null,
+        complete: false,
+      },
+    ],
+    finalMatchId: null,
+    finalPlayerIds: [],
+    championId: null,
+  };
+
+  const semifinalA = createTwistMatch({
+    tournamentId: tournament.id,
+    stage: 'semifinal',
+    slot: 1,
+    players: [players[0], players[1]],
+  });
+
+  const semifinalB = createTwistMatch({
+    tournamentId: tournament.id,
+    stage: 'semifinal',
+    slot: 2,
+    players: [players[2], players[3]],
+  });
+
+  tournament.semifinals[0].matchId = semifinalA.id;
+  tournament.semifinals[1].matchId = semifinalB.id;
+
+  assignSemifinalStatus(
+    tournament,
+    tournament.semifinals[0].playerIds,
+    semifinalA.id
+  );
+
+  assignSemifinalStatus(
+    tournament,
+    tournament.semifinals[1].playerIds,
+    semifinalB.id
+  );
+
+  twistLeagueMatches.set(semifinalA.id, semifinalA);
+  twistLeagueMatches.set(semifinalB.id, semifinalB);
+  twistLeagueTournaments.set(tournament.id, tournament);
+
+  return tournament;
+}
+
+function promoteSemifinalWinner(tournament, match) {
+  const semi = tournament.semifinals.find(
+    (entry) => entry.matchId === match.id
+  );
+
+  if (!semi || semi.complete) {
+    return;
+  }
+
+  semi.complete = true;
+  semi.winnerId = match.seriesWinnerId ?? match.winnerId ?? null;
+
+  const winner = tournament.players.find(
+    (player) => player.id === semi.winnerId
+  );
+
+  const loser = tournament.players.find(
+    (player) => player.id !== semi.winnerId &&
+      semi.playerIds.includes(player.id)
+  );
+
+  if (winner) {
+    winner.status = 'semifinal-winner';
+  }
+
+  if (loser) {
+    loser.status = 'eliminated';
+    loser.eliminated = true;
+  }
+
+  const allSemifinalsComplete = tournament.semifinals.every(
+    (entry) => entry.complete
+  );
+
+  if (!allSemifinalsComplete) {
+    return;
+  }
+
+  const winners = tournament.semifinals
+    .map((entry) => entry.winnerId)
+    .filter(Boolean);
+
+  if (winners.length !== 2) {
+    return;
+  }
+
+  const finalPlayers = winners.map((id) =>
+    tournament.players.find((player) => player.id === id)
+  ).filter(Boolean);
+
+  tournament.finalPlayerIds = finalPlayers.map((player) => player.id);
+  tournament.phase = 'final';
+
+  const finalMatch = createTwistMatch({
+    tournamentId: tournament.id,
+    stage: 'final',
+    slot: 1,
+    players: finalPlayers,
+  });
+
+  tournament.finalMatchId = finalMatch.id;
+
+  for (const player of finalPlayers) {
+    player.finalMatchId = finalMatch.id;
+    player.status = 'final';
+  }
+
+  twistLeagueMatches.set(finalMatch.id, finalMatch);
+}
+
+function completeTwistSeriesIfNeeded(match) {
+  const seriesWins = match.seriesWins;
+
+  const winnerId = Object.entries(seriesWins).find(
+    ([, wins]) => Number(wins) >= TWIST_SERIES_WINS
+  )?.[0] ?? null;
+
+  if (!winnerId) {
+    return false;
+  }
+
+  const loserId = match.players.find(
+    (player) => player.id !== winnerId
+  )?.id ?? null;
+
+  match.seriesWinnerId = winnerId;
+  match.winnerId = winnerId;
+  match.loserId = loserId;
+
+  const tournament = getTwistTournamentForMatch(match);
+
+  if (tournament) {
+    if (match.stage === 'semifinal') {
+      promoteSemifinalWinner(tournament, match);
+    } else if (match.stage === 'final') {
+      tournament.championId = winnerId;
+      tournament.phase = 'finished';
+
+      const winner = tournament.players.find(
+        (player) => player.id === winnerId
+      );
+
+      const loser = tournament.players.find(
+        (player) => player.id === loserId
+      );
+
+      if (winner) winner.status = 'champion';
+      if (loser) {
+        loser.status = 'final-loser';
+        loser.eliminated = true;
+      }
+    }
+  }
+
+  return true;
+}
+
+function resetTwistGame(match) {
+  match.scramble = generateScramble();
+  match.phase = 'ready';
+  match.raceStartAt = null;
+  match.firstSolverId = null;
+  match.deadlineAt = null;
+  match.winnerId = null;
+  match.loserId = null;
+
+  for (const player of match.players) {
+    player.ready = false;
+    player.startedAt = null;
+    player.solvedAt = null;
+    player.solveTimeMs = null;
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -1000,249 +1285,154 @@ function getTwistLeagueMatch(
 app.get(
   '/api/twist-league/debug',
   (_req, res) => {
-    res.json({
+    cleanupTwistLeagueQueue();
+
+    return res.json({
       ok: true,
-
-      queuedPlayers:
-        [
-          ...twistLeagueQueue.values()
-        ].map(
-          (entry) => ({
-            playerId:
-              entry.playerId,
-
-            username:
-              entry.username,
-          })
-        ),
-
-      activeMatches:
-        [
-          ...twistLeagueMatches.values()
-        ].map(
-          (match) => ({
-            id:
-              match.id,
-
-            phase:
-              match.phase,
-
-            players:
-              match.players.map(
-                (player) => ({
-                  id:
-                    player.id,
-
-                  username:
-                    player.username,
-
-                  ready:
-                    player.ready,
-                })
-              ),
-          })
-        ),
+      queuedPlayers: [...twistLeagueQueue.values()].map((entry) => ({
+        playerId: entry.playerId,
+        username: entry.username,
+      })),
+      tournaments: [...twistLeagueTournaments.values()].map((tournament) => ({
+        id: tournament.id,
+        phase: tournament.phase,
+        players: tournament.players,
+        bracket: getTwistTournamentBracket(tournament),
+      })),
+      activeMatches: [...twistLeagueMatches.values()].map((match) => ({
+        id: match.id,
+        tournamentId: match.tournamentId,
+        stage: match.stage,
+        slot: match.slot,
+        phase: match.phase,
+        seriesWins: match.seriesWins,
+        players: match.players.map((player) => ({
+          id: player.id,
+          username: player.username,
+          ready: player.ready,
+          solveTimeMs: player.solveTimeMs,
+        })),
+      })),
     });
   }
 );
 
 // -----------------------------------------------------------------------------
-// Twist League JOIN
+// Twist League JOIN / 4-player lobby
 // -----------------------------------------------------------------------------
 app.post(
   '/api/twist-league/join',
   (req, res) => {
     cleanupTwistLeagueQueue();
 
-    const playerId =
-      String(
-        req.body?.playerId ||
-          randomUUID()
+    const playerId = String(
+      req.body?.playerId || randomUUID()
+    );
+
+    const username = normalizeUsername(
+      req.body?.username
+    );
+
+    // Already assigned to a current semifinal/final.
+    const activeMatch = findActiveTwistMatchByPlayerId(playerId);
+
+    if (activeMatch) {
+      const me = activeMatch.players.find(
+        (player) => player.id === playerId
       );
 
-    const username =
-      normalizeUsername(
-        req.body?.username
-      );
-
-    const existing =
-      findActiveTwistMatchByPlayerId(
-        playerId
-      );
-
-    if (existing) {
-      const me =
-        existing.players.find(
-          (player) =>
-            player.id ===
-            playerId
-        );
-
-      if (me) {
-        me.username =
-          username;
-      }
+      if (me) me.username = username;
 
       return res.json({
-        status:
-          'matched',
-
+        status: 'matched',
         playerId,
-
-        players: 2,
-
-        capacity: 2,
-
-        match:
-          twistLeagueSnapshot(
-            existing
-          ),
+        players: activeMatch.bracket?.joinedPlayers ?? 4,
+        capacity: TWIST_PLAYER_CAPACITY,
+        match: twistLeagueSnapshot(activeMatch),
       });
     }
 
-    for (
-      const [
-        key,
-        entry
-      ] of twistLeagueQueue
-    ) {
-      if (
-        entry.playerId ===
-        playerId
-      ) {
-        twistLeagueQueue.delete(
-          key
-        );
-      }
-    }
+    // Player belongs to a tournament but is currently between rounds.
+    const tournament = findTwistTournamentByPlayerId(playerId);
 
-    const opponent =
-      [
-        ...twistLeagueQueue.entries()
-      ].find(
-        ([, entry]) =>
-          entry.playerId !==
-          playerId
+    if (tournament) {
+      const player = tournament.players.find(
+        (entry) => entry.id === playerId
       );
 
-    if (!opponent) {
-      twistLeagueQueue.set(
-        playerId,
-        {
+      if (player) player.username = username;
+
+      const nextMatchId =
+        player?.finalMatchId ??
+        player?.semFinalMatchId ??
+        null;
+
+      const nextMatch = nextMatchId
+        ? twistLeagueMatches.get(nextMatchId)
+        : undefined;
+
+      if (nextMatch) {
+        return res.json({
+          status: 'matched',
           playerId,
-          username,
-          joinedAt:
-            Date.now(),
-        }
-      );
+          players: TWIST_PLAYER_CAPACITY,
+          capacity: TWIST_PLAYER_CAPACITY,
+          match: twistLeagueSnapshot(nextMatch),
+        });
+      }
 
       return res.json({
-        status:
-          'searching',
-
+        status: tournament.phase === 'finished' ? 'finished' : 'waiting',
         playerId,
-
-        players: 1,
-
-        capacity: 2,
+        players: tournament.players.length,
+        capacity: TWIST_PLAYER_CAPACITY,
+        bracket: getTwistTournamentBracket(tournament),
       });
     }
 
-    twistLeagueQueue.delete(
-      opponent[0]
-    );
+    // Remove duplicate queue entry from this player.
+    for (const [key, entry] of twistLeagueQueue) {
+      if (entry.playerId === playerId) {
+        twistLeagueQueue.delete(key);
+      }
+    }
 
-    const match = {
-      id:
-        randomUUID(),
+    // Join the 4-player lobby.
+    twistLeagueQueue.set(playerId, {
+      playerId,
+      username,
+      joinedAt: Date.now(),
+    });
 
-      format:
-        'BO3',
+    const entries = [...twistLeagueQueue.values()]
+      .slice(0, TWIST_PLAYER_CAPACITY);
 
-      capacity: 2,
+    if (entries.length < TWIST_PLAYER_CAPACITY) {
+      return res.json({
+        status: 'searching',
+        playerId,
+        players: entries.length,
+        capacity: TWIST_PLAYER_CAPACITY,
+      });
+    }
 
-      phase:
-        'ready',
+    // Remove those exact four entries from the lobby.
+    for (const entry of entries) {
+      twistLeagueQueue.delete(entry.playerId);
+    }
 
-      scramble:
-        generateScramble(),
-
-      raceStartAt:
-        null,
-
-      firstSolverId:
-        null,
-
-      deadlineAt:
-        null,
-
-      winnerId:
-        null,
-
-      loserId:
-        null,
-
-      players: [
-        {
-          id:
-            opponent[1].playerId,
-
-          username:
-            opponent[1].username,
-
-          ready:
-            false,
-
-          startedAt:
-            null,
-
-          solvedAt:
-            null,
-
-          solveTimeMs:
-            null,
-        },
-
-        {
-          id:
-            playerId,
-
-          username,
-
-          ready:
-            false,
-
-          startedAt:
-            null,
-
-          solvedAt:
-            null,
-
-          solveTimeMs:
-            null,
-        },
-      ],
-    };
-
-    twistLeagueMatches.set(
-      match.id,
-      match
-    );
+    const newTournament = createFourPlayerTwistTournament(entries);
+    const myMatch = findActiveTwistMatchByPlayerId(playerId);
 
     return res.json({
-      status:
-        'matched',
-
+      status: 'matched',
       playerId,
-
-      players: 2,
-
-      capacity: 2,
-
-      match:
-        twistLeagueSnapshot(
-          match
-        ),
+      players: TWIST_PLAYER_CAPACITY,
+      capacity: TWIST_PLAYER_CAPACITY,
+      match: myMatch
+        ? twistLeagueSnapshot(myMatch)
+        : null,
+      bracket: getTwistTournamentBracket(newTournament),
     });
   }
 );
@@ -1253,24 +1443,16 @@ app.post(
 app.get(
   '/api/twist-league/state',
   (req, res) => {
-    const match =
-      getTwistLeagueMatch(
-        req
-      );
+    const match = getTwistLeagueMatch(req);
 
     if (!match) {
-      return res
-        .status(404)
-        .json({
-          error:
-            'twist league match not found',
-        });
+      return res.status(404).json({
+        error: 'twist league match not found',
+      });
     }
 
     return res.json(
-      twistLeagueSnapshot(
-        match
-      )
+      twistLeagueSnapshot(match)
     );
   }
 );
@@ -1281,43 +1463,31 @@ app.get(
 app.post(
   '/api/twist-league/ready',
   (req, res) => {
-    const match =
-      getTwistLeagueMatch(
-        req
-      );
+    const match = getTwistLeagueMatch(req);
+    const playerId = String(
+      req.body?.playerId || ''
+    );
 
-    const playerId =
-      String(
-        req.body?.playerId ||
-          ''
-      );
+    const player = match?.players.find(
+      (p) => p.id === playerId
+    );
 
-    const player =
-      match?.players.find(
-        (p) =>
-          p.id ===
-          playerId
-      );
-
-    if (
-      !match ||
-      !player
-    ) {
-      return res
-        .status(404)
-        .json({
-          error:
-            'twist league match/player not found',
-        });
+    if (!match || !player) {
+      return res.status(404).json({
+        error: 'twist league match/player not found',
+      });
     }
 
-    player.ready =
-      true;
+    if (match.phase !== 'ready') {
+      return res.status(409).json({
+        error: 'match is not ready for READY state',
+      });
+    }
+
+    player.ready = true;
 
     return res.json(
-      twistLeagueSnapshot(
-        match
-      )
+      twistLeagueSnapshot(match)
     );
   }
 );
@@ -1328,75 +1498,39 @@ app.post(
 app.post(
   '/api/twist-league/start',
   (req, res) => {
-    const match =
-      getTwistLeagueMatch(
-        req
-      );
+    const match = getTwistLeagueMatch(req);
+    const playerId = String(
+      req.body?.playerId || ''
+    );
 
-    const playerId =
-      String(
-        req.body?.playerId ||
-          ''
-      );
+    const player = match?.players.find(
+      (p) => p.id === playerId
+    );
 
-    const player =
-      match?.players.find(
-        (p) =>
-          p.id ===
-          playerId
-      );
-
-    if (
-      !match ||
-      !player
-    ) {
-      return res
-        .status(404)
-        .json({
-          error:
-            'twist league match/player not found',
-        });
+    if (!match || !player) {
+      return res.status(404).json({
+        error: 'twist league match/player not found',
+      });
     }
 
-    if (
-      match.players.length !==
-      2
-    ) {
-      return res
-        .status(409)
-        .json({
-          error:
-            'twist league requires exactly 2 players',
-        });
+    if (match.players.length !== 2) {
+      return res.status(409).json({
+        error: 'Twist League match requires exactly 2 players per bracket game',
+      });
     }
 
-    if (
-      !match.players.every(
-        (p) =>
-          p.ready
-      )
-    ) {
-      return res
-        .status(409)
-        .json({
-          error:
-            'both Twist League players must be ready',
-        });
+    if (!match.players.every((p) => p.ready)) {
+      return res.status(409).json({
+        error: 'both bracket players must be ready',
+      });
     }
 
-    if (
-      match.raceStartAt ===
-      null
-    ) {
-      match.raceStartAt =
-        Date.now() +
-        3000;
+    if (match.raceStartAt === null) {
+      match.raceStartAt = Date.now() + TWIST_START_DELAY_MS;
     }
 
     return res.json(
-      twistLeagueSnapshot(
-        match
-      )
+      twistLeagueSnapshot(match)
     );
   }
 );
@@ -1407,215 +1541,141 @@ app.post(
 app.post(
   '/api/twist-league/solve',
   (req, res) => {
-    const match =
-      getTwistLeagueMatch(
-        req
-      );
-
-    const playerId =
-      String(
-        req.body?.playerId ||
-          ''
-      );
-
-    const player =
-      match?.players.find(
-        (p) =>
-          p.id ===
-          playerId
-      );
-
-    if (
-      !match ||
-      !player
-    ) {
-      return res
-        .status(404)
-        .json({
-          error:
-            'twist league match/player not found',
-        });
-    }
-
-    advanceTwistLeagueMatch(
-      match
+    const match = getTwistLeagueMatch(req);
+    const playerId = String(
+      req.body?.playerId || ''
     );
 
+    const player = match?.players.find(
+      (p) => p.id === playerId
+    );
+
+    if (!match || !player) {
+      return res.status(404).json({
+        error: 'twist league match/player not found',
+      });
+    }
+
+    advanceTwistLeagueMatch(match);
+
     if (
-      match.phase !==
-        'racing' ||
-      player.solvedAt !==
-        null
+      match.phase !== 'racing' ||
+      player.solvedAt !== null
     ) {
       return res.json(
-        twistLeagueSnapshot(
-          match
-        )
+        twistLeagueSnapshot(match)
       );
     }
 
-    const now =
-      Date.now();
+    const now = Date.now();
 
-    const requestedSolvedAt =
-      Number(
-        req.body?.solvedAt
-      );
+    const requestedSolvedAt = Number(
+      req.body?.solvedAt
+    );
 
-    const requestedElapsedMs =
-      Number(
-        req.body?.elapsedMs
-      );
+    const requestedElapsedMs = Number(
+      req.body?.elapsedMs
+    );
 
-    const acceptedSolvedAt =
-      Math.min(
-        Number.isFinite(
-          requestedSolvedAt
-        )
-          ? requestedSolvedAt
-          : now,
-
-        now
-      );
+    const acceptedSolvedAt = Math.min(
+      Number.isFinite(requestedSolvedAt)
+        ? requestedSolvedAt
+        : now,
+      now
+    );
 
     const startAt =
       player.startedAt ??
       match.raceStartAt ??
       now;
 
-    const calculated =
-      Math.max(
-        1,
-
-        acceptedSolvedAt -
-          startAt
-      );
+    const calculated = Math.max(
+      1,
+      acceptedSolvedAt - startAt
+    );
 
     const clientElapsed =
-      Number.isFinite(
-        requestedElapsedMs
-      ) &&
-      requestedElapsedMs >
-        0
-        ? Math.round(
-            requestedElapsedMs
-          )
+      Number.isFinite(requestedElapsedMs) &&
+      requestedElapsedMs > 0
+        ? Math.round(requestedElapsedMs)
         : 0;
 
-    const solveTimeMs =
-      Math.max(
-        1,
+    const solveTimeMs = Math.max(
+      1,
+      clientElapsed > 0
+        ? clientElapsed
+        : calculated
+    );
 
-        clientElapsed >
-          0
-          ? clientElapsed
-          : calculated
+    // 15-second second-solver window.
+    if (
+      match.deadlineAt !== null &&
+      match.firstSolverId !== player.id &&
+      acceptedSolvedAt > match.deadlineAt
+    ) {
+      const first = match.players.find(
+        (p) => p.id === match.firstSolverId
       );
 
-    if (
-      match.deadlineAt !==
-        null &&
-      match.firstSolverId !==
-        player.id &&
-      acceptedSolvedAt >
-        match.deadlineAt
-    ) {
-      const first =
-        match.players.find(
-          (p) =>
-            p.id ===
-            match.firstSolverId
-        );
-
-      match.phase =
-        'finished';
-
-      match.winnerId =
-        first?.id ??
-        null;
-
-      match.loserId =
-        player.id;
+      match.phase = 'finished';
+      match.winnerId = first?.id ?? null;
+      match.loserId = player.id;
 
       return res.json(
-        twistLeagueSnapshot(
-          match
-        )
+        twistLeagueSnapshot(match)
       );
     }
 
-    player.startedAt =
-      startAt;
+    player.startedAt = startAt;
+    player.solvedAt = acceptedSolvedAt;
+    player.solveTimeMs = solveTimeMs;
 
-    player.solvedAt =
-      acceptedSolvedAt;
-
-    player.solveTimeMs =
-      solveTimeMs;
-
-    if (
-      match.firstSolverId ===
-      null
-    ) {
-      match.firstSolverId =
-        player.id;
-
-      match.deadlineAt =
-        acceptedSolvedAt +
-        15000;
+    // First solver starts the finish window.
+    if (match.firstSolverId === null) {
+      match.firstSolverId = player.id;
+      match.deadlineAt = acceptedSolvedAt + TWIST_FINISH_WINDOW_MS;
 
       return res.json(
-        twistLeagueSnapshot(
-          match
-        )
+        twistLeagueSnapshot(match)
       );
     }
 
-    const first =
-      match.players.find(
-        (p) =>
-          p.id ===
-          match.firstSolverId
-      );
+    const first = match.players.find(
+      (p) => p.id === match.firstSolverId
+    );
 
-    if (
-      !first ||
-      first.solveTimeMs ==
-        null
-    ) {
-      return res
-        .status(409)
-        .json({
-          error:
-            'first solver state is incomplete',
-        });
+    if (!first || first.solveTimeMs == null) {
+      return res.status(409).json({
+        error: 'first solver state is incomplete',
+      });
     }
 
-    const secondTime =
-      player.solveTimeMs;
+    const second = player;
+    const firstTime = first.solveTimeMs;
+    const secondTime = second.solveTimeMs;
 
-    const firstTime =
-      first.solveTimeMs;
-
-    match.phase =
-      'finished';
-
-    match.winnerId =
-      secondTime <
-      firstTime
-        ? player.id
+    const winnerId =
+      secondTime < firstTime
+        ? second.id
         : first.id;
 
-    match.loserId =
-      secondTime <
-      firstTime
+    const loserId =
+      winnerId === second.id
         ? first.id
-        : player.id;
+        : second.id;
+
+    match.winnerId = winnerId;
+    match.loserId = loserId;
+    match.phase = 'finished';
+
+    // Round/game winner adds one BO3 series win.
+    match.seriesWins[winnerId] =
+      Number(match.seriesWins[winnerId] || 0) + 1;
+
+    completeTwistSeriesIfNeeded(match);
 
     return res.json(
-      twistLeagueSnapshot(
-        match
-      )
+      twistLeagueSnapshot(match)
     );
   }
 );
@@ -1626,181 +1686,119 @@ app.post(
 app.post(
   '/api/twist-league/timeout',
   (req, res) => {
-    const match =
-      getTwistLeagueMatch(
-        req
-      );
+    const match = getTwistLeagueMatch(req);
 
     if (!match) {
-      return res
-        .status(404)
-        .json({
-          error:
-            'twist league match not found',
-        });
+      return res.status(404).json({
+        error: 'twist league match not found',
+      });
     }
 
-    advanceTwistLeagueMatch(
-      match
-    );
+    advanceTwistLeagueMatch(match);
 
-    if (
-      match.phase ===
-      'finished'
-    ) {
+    if (match.phase === 'finished') {
       return res.json(
-        twistLeagueSnapshot(
-          match
-        )
+        twistLeagueSnapshot(match)
       );
     }
 
     if (
-      match.phase !==
-        'racing' ||
+      match.phase !== 'racing' ||
       !match.firstSolverId ||
       !match.deadlineAt
     ) {
       return res.json(
-        twistLeagueSnapshot(
-          match
-        )
+        twistLeagueSnapshot(match)
       );
     }
 
-    if (
-      Date.now() <
-      match.deadlineAt
-    ) {
+    if (Date.now() < match.deadlineAt) {
       return res.json(
-        twistLeagueSnapshot(
-          match
-        )
+        twistLeagueSnapshot(match)
       );
     }
 
-    const first =
-      match.players.find(
-        (p) =>
-          p.id ===
-          match.firstSolverId
-      );
+    const first = match.players.find(
+      (p) => p.id === match.firstSolverId
+    );
 
-    const second =
-      match.players.find(
-        (p) =>
-          p.id !==
-          match.firstSolverId
-      );
+    const second = match.players.find(
+      (p) => p.id !== match.firstSolverId
+    );
 
-    if (
-      second?.solvedAt !==
-      null
-    ) {
+    let winnerId = first?.id ?? null;
+    let loserId = second?.id ?? null;
+
+    if (second?.solvedAt !== null) {
       const firstTime =
-        first?.solveTimeMs ??
-        Number.POSITIVE_INFINITY;
-
+        first?.solveTimeMs ?? Number.POSITIVE_INFINITY;
       const secondTime =
-        second?.solveTimeMs ??
-        Number.POSITIVE_INFINITY;
+        second?.solveTimeMs ?? Number.POSITIVE_INFINITY;
 
-      match.phase =
-        'finished';
-
-      match.winnerId =
-        secondTime <
-        firstTime
+      winnerId =
+        secondTime < firstTime
           ? second.id
-          : first?.id ??
-            null;
+          : first?.id ?? null;
 
-      match.loserId =
-        secondTime <
-        firstTime
-          ? first?.id ??
-            null
+      loserId =
+        secondTime < firstTime
+          ? first?.id ?? null
           : second.id;
-
-      return res.json(
-        twistLeagueSnapshot(
-          match
-        )
-      );
     }
 
-    match.phase =
-      'finished';
+    match.phase = 'finished';
+    match.winnerId = winnerId;
+    match.loserId = loserId;
 
-    match.winnerId =
-      first?.id ??
-      null;
+    if (winnerId) {
+      match.seriesWins[winnerId] =
+        Number(match.seriesWins[winnerId] || 0) + 1;
+    }
 
-    match.loserId =
-      second?.id ??
-      null;
+    completeTwistSeriesIfNeeded(match);
 
     return res.json(
-      twistLeagueSnapshot(
-        match
-      )
+      twistLeagueSnapshot(match)
     );
   }
 );
 
 // -----------------------------------------------------------------------------
 // Twist League NEXT GAME
-// Same match ID
-// Same 2 players
-// New scramble
-// Safe when both clients call at nearly the same time.
+// Same match ID within a semifinal/final series.
 // -----------------------------------------------------------------------------
 app.post(
   '/api/twist-league/next-game',
   (req, res) => {
-    const match =
-      getTwistLeagueMatch(req);
-
-    const playerId =
-      String(
-        req.body?.playerId || ''
-      );
+    const match = getTwistLeagueMatch(req);
+    const playerId = String(
+      req.body?.playerId || ''
+    );
 
     if (!match) {
-      return res
-        .status(404)
-        .json({
-          error:
-            'twist league match not found',
-        });
+      return res.status(404).json({
+        error: 'twist league match not found',
+      });
     }
 
-    const player =
-      match.players.find(
-        (p) =>
-          p.id === playerId
-      );
+    const player = match.players.find(
+      (p) => p.id === playerId
+    );
 
     if (!player) {
-      return res
-        .status(403)
-        .json({
-          error:
-            'player is not part of this match',
-        });
+      return res.status(403).json({
+        error: 'player is not part of this match',
+      });
     }
 
-    // -------------------------------------------------------------------------
-    // Both phones can call this endpoint.
-    //
-    // First phone:
-    // finished -> ready
-    //
-    // Second phone:
-    // already ready -> return the SAME match.
-    //
-    // This prevents the second player from being disconnected.
-    // -------------------------------------------------------------------------
+    // Series already complete: return the final snapshot.
+    if (match.seriesWinnerId) {
+      return res.json(
+        twistLeagueSnapshot(match)
+      );
+    }
+
+    // Both phones may call this after a completed game.
     if (
       match.phase === 'ready' &&
       match.raceStartAt === null &&
@@ -1817,72 +1815,28 @@ app.post(
       )
     ) {
       return res.json(
-        twistLeagueSnapshot(
-          match
-        )
+        twistLeagueSnapshot(match)
       );
     }
 
-    // Current game must be finished.
-    if (
-      match.phase !==
-      'finished'
-    ) {
-      return res
-        .status(409)
-        .json({
-          error:
-            'current game is not finished',
-        });
+    if (match.phase !== 'finished') {
+      return res.status(409).json({
+        error: 'current game is not finished',
+      });
     }
 
-    // IMPORTANT:
-    // Do not create a new match.
-    // Keep the same match.id and the same two players.
-    // Only reset the current game state.
-
-    match.scramble =
-      generateScramble();
-
-    match.phase =
-      'ready';
-
-    match.raceStartAt =
-      null;
-
-    match.firstSolverId =
-      null;
-
-    match.deadlineAt =
-      null;
-
-    match.winnerId =
-      null;
-
-    match.loserId =
-      null;
-
-    for (
-      const p of
-      match.players
-    ) {
-      p.ready =
-        false;
-
-      p.startedAt =
-        null;
-
-      p.solvedAt =
-        null;
-
-      p.solveTimeMs =
-        null;
+    // A winner who already clinched the BO3 should not be reset.
+    if (match.seriesWinnerId) {
+      return res.json(
+        twistLeagueSnapshot(match)
+      );
     }
+
+    match.gameNumber += 1;
+    resetTwistGame(match);
 
     return res.json(
-      twistLeagueSnapshot(
-        match
-      )
+      twistLeagueSnapshot(match)
     );
   }
 );
@@ -1893,42 +1847,38 @@ app.post(
 app.post(
   '/api/twist-league/leave',
   (req, res) => {
-    const playerId =
-      String(
-        req.body?.playerId ||
-          ''
-      );
-
-    twistLeagueQueue.delete(
-      playerId
+    const playerId = String(
+      req.body?.playerId || ''
     );
 
-    for (
-      const [
-        matchId,
-        match,
-      ] of twistLeagueMatches
-    ) {
-      if (
-        match.phase !==
-          'finished' &&
-        match.players.some(
-          (p) =>
-            p.id ===
-            playerId
-        )
-      ) {
-        twistLeagueMatches.delete(
-          matchId
-        );
+    twistLeagueQueue.delete(playerId);
 
-        break;
+    for (const [tournamentId, tournament] of twistLeagueTournaments) {
+      const player = tournament.players.find(
+        (entry) => entry.id === playerId
+      );
+
+      if (!player) continue;
+
+      // Mark the player as having left, but keep the tournament record so
+      // the remaining bracket state is inspectable during development.
+      player.status = 'left';
+
+      // If this player has an active game, remove the game match.
+      for (const [matchId, match] of twistLeagueMatches) {
+        if (
+          match.tournamentId === tournamentId &&
+          match.phase !== 'finished' &&
+          match.players.some((p) => p.id === playerId)
+        ) {
+          twistLeagueMatches.delete(matchId);
+        }
       }
+
+      break;
     }
 
-    return res.json({
-      ok: true,
-    });
+    return res.json({ ok: true });
   }
 );
 

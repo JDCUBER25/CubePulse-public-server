@@ -9,15 +9,11 @@ app.use(express.json());
 // =============================================================================
 // CORS
 // =============================================================================
-
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
   if (origin) {
-    res.header(
-      "Access-Control-Allow-Origin",
-      origin
-    );
+    res.header("Access-Control-Allow-Origin", origin);
   }
 
   res.header(
@@ -40,7 +36,6 @@ app.use((req, res, next) => {
 // =============================================================================
 // HELPERS
 // =============================================================================
-
 function normalizeScramble(value) {
   return String(value ?? "")
     .trim()
@@ -64,22 +59,14 @@ function generateScramble(length = 20) {
 
   while (result.length < length) {
     const face =
-      faces[
-        Math.floor(
-          Math.random() * faces.length
-        )
-      ];
+      faces[Math.floor(Math.random() * faces.length)];
 
     if (face === lastFace) {
       continue;
     }
 
     const suffix =
-      suffixes[
-        Math.floor(
-          Math.random() * suffixes.length
-        )
-      ];
+      suffixes[Math.floor(Math.random() * suffixes.length)];
 
     result.push(face + suffix);
     lastFace = face;
@@ -89,9 +76,8 @@ function generateScramble(length = 20) {
 }
 
 // =============================================================================
-// 1v1 BATTLE
+// 1V1 BATTLE
 // =============================================================================
-
 const queue = new Map();
 const matches = new Map();
 
@@ -103,8 +89,7 @@ function findActiveMatchByPlayerId(
     if (
       match.phase !== "finished" &&
       match.players.some(
-        (player) =>
-          player.id === playerId
+        (player) => player.id === playerId
       )
     ) {
       return match;
@@ -137,11 +122,9 @@ function snapshot(match) {
 
   return {
     ...match,
-    players: match.players.map(
-      (player) => ({
-        ...player,
-      })
-    ),
+    players: match.players.map((player) => ({
+      ...player,
+    })),
   };
 }
 
@@ -155,10 +138,9 @@ function getMatch(req) {
   return matches.get(id);
 }
 
-// =============================================================================
+// -----------------------------------------------------------------------------
 // HEALTH
-// =============================================================================
-
+// -----------------------------------------------------------------------------
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
@@ -167,28 +149,25 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-// =============================================================================
-// 1v1 DEBUG
-// =============================================================================
+// -----------------------------------------------------------------------------
+// 1V1 DEBUG
+// -----------------------------------------------------------------------------
+app.get("/api/matchmaking/debug", (_req, res) => {
+  res.json({
+    ok: true,
 
-app.get(
-  "/api/matchmaking/debug",
-  (_req, res) => {
-    res.json({
-      ok: true,
-
-      queuedPlayers: [
-        ...queue.values(),
-      ].map((entry) => ({
+    queuedPlayers: [...queue.values()].map(
+      (entry) => ({
         playerId: entry.playerId,
         username: entry.username,
-      })),
+      })
+    ),
 
-      activeMatches: [
-        ...matches.values(),
-      ].map((match) => ({
+    activeMatches: [...matches.values()].map(
+      (match) => ({
         id: match.id,
         phase: match.phase,
+
         players: match.players.map(
           (player) => ({
             id: player.id,
@@ -196,658 +175,513 @@ app.get(
             ready: player.ready,
           })
         ),
-      })),
-    });
-  }
-);
+      })
+    ),
+  });
+});
 
-// =============================================================================
-// 1v1 JOIN
-// =============================================================================
+// -----------------------------------------------------------------------------
+// 1V1 JOIN
+// -----------------------------------------------------------------------------
+app.post("/api/matchmaking/join", (req, res) => {
+  const playerId = String(
+    req.body?.playerId || randomUUID()
+  );
 
-app.post(
-  "/api/matchmaking/join",
-  (req, res) => {
-    const playerId = String(
-      req.body?.playerId ||
-        randomUUID()
+  const username = normalizeUsername(
+    req.body?.username
+  );
+
+  const existing =
+    findActiveMatchByPlayerId(
+      playerId,
+      matches
     );
 
-    const username =
-      normalizeUsername(
-        req.body?.username
-      );
-
-    const existing =
-      findActiveMatchByPlayerId(
-        playerId,
-        matches
-      );
-
-    if (existing) {
-      const me =
-        existing.players.find(
-          (player) =>
-            player.id === playerId
-        );
-
-      if (me) {
-        me.username = username;
-      }
-
-      return res.json({
-        status: "matched",
-        playerId,
-        match: snapshot(existing),
-      });
-    }
-
-    const requested =
-      normalizeScramble(
-        req.body?.scramble
-      );
-
-    const scramble =
-      requested ||
-      generateScramble();
-
-    for (
-      const [key, entry] of queue
-    ) {
-      if (
-        entry.playerId === playerId
-      ) {
-        queue.delete(key);
-      }
-    }
-
-    const opponent =
-      [...queue.entries()].find(
-        ([, entry]) =>
-          entry.playerId !== playerId
-      );
-
-    if (!opponent) {
-      queue.set(
-        playerId,
-        {
-          playerId,
-          username,
-          scramble,
-        }
-      );
-
-      return res.json({
-        status: "searching",
-        playerId,
-      });
-    }
-
-    queue.delete(opponent[0]);
-
-    const match = {
-      id: randomUUID(),
-
-      scramble:
-        opponent[1].scramble ||
-        scramble,
-
-      phase: "ready",
-
-      raceStartAt: null,
-
-      firstSolverId: null,
-
-      deadlineAt: null,
-
-      winnerId: null,
-
-      loserId: null,
-
-      players: [
-        {
-          id:
-            opponent[1].playerId,
-
-          username:
-            opponent[1].username,
-
-          ready: false,
-
-          startedAt: null,
-
-          solvedAt: null,
-
-          solveTimeMs: null,
-        },
-
-        {
-          id: playerId,
-
-          username,
-
-          ready: false,
-
-          startedAt: null,
-
-          solvedAt: null,
-
-          solveTimeMs: null,
-        },
-      ],
-    };
-
-    matches.set(
-      match.id,
-      match
+  if (existing) {
+    const me = existing.players.find(
+      (player) =>
+        player.id === playerId
     );
+
+    if (me) {
+      me.username = username;
+    }
 
     return res.json({
       status: "matched",
       playerId,
-      match: snapshot(match),
+      match: snapshot(existing),
     });
   }
-);
 
-// =============================================================================
-// 1v1 STATE
-// =============================================================================
+  const requested = normalizeScramble(
+    req.body?.scramble
+  );
 
-app.get(
-  "/api/matchmaking/state",
-  (req, res) => {
-    const match = getMatch(req);
+  const scramble =
+    requested || generateScramble();
 
-    if (!match) {
-      return res.status(404).json({
-        error: "match not found",
-      });
+  for (const [key, entry] of queue) {
+    if (entry.playerId === playerId) {
+      queue.delete(key);
     }
-
-    return res.json(
-      snapshot(match)
-    );
   }
-);
 
-// =============================================================================
-// 1v1 READY
-// =============================================================================
-
-app.post(
-  "/api/matchmaking/ready",
-  (req, res) => {
-    const match = getMatch(req);
-
-    const playerId = String(
-      req.body?.playerId || ""
+  const opponent =
+    [...queue.entries()].find(
+      ([, entry]) =>
+        entry.playerId !== playerId
     );
 
-    const player =
-      match?.players.find(
-        (p) =>
-          p.id === playerId
-      );
-
-    if (!match || !player) {
-      return res.status(404).json({
-        error:
-          "match/player not found",
-      });
-    }
-
-    player.ready = true;
-
-    return res.json(
-      snapshot(match)
-    );
-  }
-);
-
-// =============================================================================
-// 1v1 START
-// =============================================================================
-
-app.post(
-  "/api/matchmaking/start",
-  (req, res) => {
-    const match = getMatch(req);
-
-    const playerId = String(
-      req.body?.playerId || ""
-    );
-
-    const player =
-      match?.players.find(
-        (p) =>
-          p.id === playerId
-      );
-
-    if (!match || !player) {
-      return res.status(404).json({
-        error:
-          "match/player not found",
-      });
-    }
-
-    if (
-      !match.players.every(
-        (p) => p.ready
-      )
-    ) {
-      return res.status(409).json({
-        error:
-          "both players must be ready",
-      });
-    }
-
-    if (
-      match.raceStartAt === null
-    ) {
-      match.raceStartAt =
-        Date.now() + 3000;
-    }
-
-    return res.json(
-      snapshot(match)
-    );
-  }
-);
-
-// =============================================================================
-// 1v1 SOLVE
-// =============================================================================
-
-app.post(
-  "/api/matchmaking/solve",
-  (req, res) => {
-    const match = getMatch(req);
-
-    const playerId = String(
-      req.body?.playerId || ""
-    );
-
-    const player =
-      match?.players.find(
-        (p) =>
-          p.id === playerId
-      );
-
-    if (!match || !player) {
-      return res.status(404).json({
-        error:
-          "match/player not found",
-      });
-    }
-
-    advanceMatch(match);
-
-    if (
-      match.phase !== "racing" ||
-      player.solvedAt !== null
-    ) {
-      return res.json(
-        snapshot(match)
-      );
-    }
-
-    const now = Date.now();
-
-    const requestedSolvedAt =
-      Number(
-        req.body?.solvedAt
-      );
-
-    const requestedElapsedMs =
-      Number(
-        req.body?.elapsedMs
-      );
-
-    const acceptedSolvedAt =
-      Math.min(
-        Number.isFinite(
-          requestedSolvedAt
-        )
-          ? requestedSolvedAt
-          : now,
-        now
-      );
-
-    const startAt =
-      player.startedAt ??
-      match.raceStartAt ??
-      now;
-
-    const calculated =
-      Math.max(
-        1,
-        acceptedSolvedAt -
-          startAt
-      );
-
-    const clientElapsed =
-      Number.isFinite(
-        requestedElapsedMs
-      ) &&
-      requestedElapsedMs > 0
-        ? Math.round(
-            requestedElapsedMs
-          )
-        : 0;
-
-    const solveTimeMs =
-      Math.max(
-        1,
-        clientElapsed > 0
-          ? clientElapsed
-          : calculated
-      );
-
-    if (
-      match.deadlineAt !== null &&
-      match.firstSolverId !==
-        player.id &&
-      acceptedSolvedAt >
-        match.deadlineAt
-    ) {
-      const first =
-        match.players.find(
-          (p) =>
-            p.id ===
-            match.firstSolverId
-        );
-
-      match.phase =
-        "finished";
-
-      match.winnerId =
-        first?.id ??
-        null;
-
-      match.loserId =
-        player.id;
-
-      return res.json(
-        snapshot(match)
-      );
-    }
-
-    player.startedAt =
-      startAt;
-
-    player.solvedAt =
-      acceptedSolvedAt;
-
-    player.solveTimeMs =
-      solveTimeMs;
-
-    if (
-      match.firstSolverId ===
-      null
-    ) {
-      match.firstSolverId =
-        player.id;
-
-      match.deadlineAt =
-        acceptedSolvedAt + 15000;
-
-      return res.json(
-        snapshot(match)
-      );
-    }
-
-    const first =
-      match.players.find(
-        (p) =>
-          p.id ===
-          match.firstSolverId
-      );
-
-    if (
-      !first ||
-      first.solveTimeMs === null
-    ) {
-      return res.status(409).json({
-        error:
-          "first solver state is incomplete",
-      });
-    }
-
-    const secondTime =
-      player.solveTimeMs;
-
-    const firstTime =
-      first.solveTimeMs;
-
-    match.phase =
-      "finished";
-
-    match.winnerId =
-      secondTime < firstTime
-        ? player.id
-        : first.id;
-
-    match.loserId =
-      secondTime < firstTime
-        ? first.id
-        : player.id;
-
-    return res.json(
-      snapshot(match)
-    );
-  }
-);
-
-// =============================================================================
-// 1v1 TIMEOUT
-// =============================================================================
-
-app.post(
-  "/api/matchmaking/timeout",
-  (req, res) => {
-    const match = getMatch(req);
-
-    const playerId = String(
-      req.body?.playerId || ""
-    );
-
-    if (!match) {
-      return res.status(404).json({
-        error:
-          "match not found",
-      });
-    }
-
-    if (
-      !match.players.some(
-        (p) =>
-          p.id === playerId
-      )
-    ) {
-      return res.status(403).json({
-        error:
-          "player is not part of this match",
-      });
-    }
-
-    advanceMatch(match);
-
-    if (
-      match.phase === "finished"
-    ) {
-      return res.json(
-        snapshot(match)
-      );
-    }
-
-    if (
-      match.phase !== "racing" ||
-      !match.firstSolverId ||
-      !match.deadlineAt
-    ) {
-      return res.json(
-        snapshot(match)
-      );
-    }
-
-    if (
-      Date.now() <
-      match.deadlineAt
-    ) {
-      return res.json(
-        snapshot(match)
-      );
-    }
-
-    const first =
-      match.players.find(
-        (p) =>
-          p.id ===
-          match.firstSolverId
-      );
-
-    const second =
-      match.players.find(
-        (p) =>
-          p.id !==
-          match.firstSolverId
-      );
-
-    if (
-      second?.solvedAt !== null
-    ) {
-      const firstTime =
-        first?.solveTimeMs ??
-        Number.POSITIVE_INFINITY;
-
-      const secondTime =
-        second?.solveTimeMs ??
-        Number.POSITIVE_INFINITY;
-
-      match.phase =
-        "finished";
-
-      match.winnerId =
-        secondTime < firstTime
-          ? second.id
-          : first?.id ?? null;
-
-      match.loserId =
-        secondTime < firstTime
-          ? first?.id ?? null
-          : second.id;
-
-      return res.json(
-        snapshot(match)
-      );
-    }
-
-    match.phase =
-      "finished";
-
-    match.winnerId =
-      first?.id ?? null;
-
-    match.loserId =
-      second?.id ?? null;
-
-    return res.json(
-      snapshot(match)
-    );
-  }
-);
-
-// =============================================================================
-// 1v1 LEAVE
-// =============================================================================
-
-app.post(
-  "/api/matchmaking/leave",
-  (req, res) => {
-    queue.delete(
-      String(
-        req.body?.playerId || ""
-      )
-    );
+  if (!opponent) {
+    queue.set(playerId, {
+      playerId,
+      username,
+      scramble,
+    });
 
     return res.json({
-      ok: true,
+      status: "searching",
+      playerId,
     });
   }
-);
+
+  queue.delete(opponent[0]);
+
+  const match = {
+    id: randomUUID(),
+
+    scramble:
+      opponent[1].scramble || scramble,
+
+    phase: "ready",
+
+    raceStartAt: null,
+
+    firstSolverId: null,
+
+    deadlineAt: null,
+
+    winnerId: null,
+
+    loserId: null,
+
+    players: [
+      {
+        id: opponent[1].playerId,
+        username: opponent[1].username,
+        ready: false,
+        startedAt: null,
+        solvedAt: null,
+        solveTimeMs: null,
+      },
+
+      {
+        id: playerId,
+        username,
+        ready: false,
+        startedAt: null,
+        solvedAt: null,
+        solveTimeMs: null,
+      },
+    ],
+  };
+
+  matches.set(match.id, match);
+
+  return res.json({
+    status: "matched",
+    playerId,
+    match: snapshot(match),
+  });
+});
+
+// -----------------------------------------------------------------------------
+// 1V1 STATE
+// -----------------------------------------------------------------------------
+app.get("/api/matchmaking/state", (req, res) => {
+  const match = getMatch(req);
+
+  if (!match) {
+    return res.status(404).json({
+      error: "match not found",
+    });
+  }
+
+  return res.json(snapshot(match));
+});
+
+// -----------------------------------------------------------------------------
+// 1V1 READY
+// -----------------------------------------------------------------------------
+app.post("/api/matchmaking/ready", (req, res) => {
+  const match = getMatch(req);
+
+  const playerId = String(
+    req.body?.playerId || ""
+  );
+
+  const player = match?.players.find(
+    (p) => p.id === playerId
+  );
+
+  if (!match || !player) {
+    return res.status(404).json({
+      error: "match/player not found",
+    });
+  }
+
+  player.ready = true;
+
+  return res.json(snapshot(match));
+});
+
+// -----------------------------------------------------------------------------
+// 1V1 START
+// -----------------------------------------------------------------------------
+app.post("/api/matchmaking/start", (req, res) => {
+  const match = getMatch(req);
+
+  const playerId = String(
+    req.body?.playerId || ""
+  );
+
+  const player = match?.players.find(
+    (p) => p.id === playerId
+  );
+
+  if (!match || !player) {
+    return res.status(404).json({
+      error: "match/player not found",
+    });
+  }
+
+  if (
+    !match.players.every(
+      (p) => p.ready
+    )
+  ) {
+    return res.status(409).json({
+      error: "both players must be ready",
+    });
+  }
+
+  if (match.raceStartAt === null) {
+    match.raceStartAt =
+      Date.now() + 3000;
+  }
+
+  return res.json(snapshot(match));
+});
+
+// -----------------------------------------------------------------------------
+// 1V1 SOLVE
+// -----------------------------------------------------------------------------
+app.post("/api/matchmaking/solve", (req, res) => {
+  const match = getMatch(req);
+
+  const playerId = String(
+    req.body?.playerId || ""
+  );
+
+  const player = match?.players.find(
+    (p) => p.id === playerId
+  );
+
+  if (!match || !player) {
+    return res.status(404).json({
+      error: "match/player not found",
+    });
+  }
+
+  advanceMatch(match);
+
+  if (
+    match.phase !== "racing" ||
+    player.solvedAt !== null
+  ) {
+    return res.json(snapshot(match));
+  }
+
+  const now = Date.now();
+
+  const requestedSolvedAt = Number(
+    req.body?.solvedAt
+  );
+
+  const requestedElapsedMs = Number(
+    req.body?.elapsedMs
+  );
+
+  const acceptedSolvedAt = Math.min(
+    Number.isFinite(requestedSolvedAt)
+      ? requestedSolvedAt
+      : now,
+    now
+  );
+
+  const startAt =
+    player.startedAt ??
+    match.raceStartAt ??
+    now;
+
+  const calculated = Math.max(
+    1,
+    acceptedSolvedAt - startAt
+  );
+
+  const clientElapsed =
+    Number.isFinite(requestedElapsedMs) &&
+    requestedElapsedMs > 0
+      ? Math.round(requestedElapsedMs)
+      : 0;
+
+  const solveTimeMs = Math.max(
+    1,
+    clientElapsed > 0
+      ? clientElapsed
+      : calculated
+  );
+
+  if (
+    match.deadlineAt !== null &&
+    match.firstSolverId !== player.id &&
+    acceptedSolvedAt > match.deadlineAt
+  ) {
+    const first =
+      match.players.find(
+        (p) =>
+          p.id ===
+          match.firstSolverId
+      );
+
+    match.phase = "finished";
+    match.winnerId = first?.id ?? null;
+    match.loserId = player.id;
+
+    return res.json(snapshot(match));
+  }
+
+  player.startedAt = startAt;
+  player.solvedAt = acceptedSolvedAt;
+  player.solveTimeMs = solveTimeMs;
+
+  if (match.firstSolverId === null) {
+    match.firstSolverId = player.id;
+
+    match.deadlineAt =
+      acceptedSolvedAt + 15000;
+
+    return res.json(snapshot(match));
+  }
+
+  const first =
+    match.players.find(
+      (p) =>
+        p.id ===
+        match.firstSolverId
+    );
+
+  if (
+    !first ||
+    first.solveTimeMs == null
+  ) {
+    return res.status(409).json({
+      error:
+        "first solver state is incomplete",
+    });
+  }
+
+  const secondTime = player.solveTimeMs;
+  const firstTime = first.solveTimeMs;
+
+  match.phase = "finished";
+
+  match.winnerId =
+    secondTime < firstTime
+      ? player.id
+      : first.id;
+
+  match.loserId =
+    secondTime < firstTime
+      ? first.id
+      : player.id;
+
+  return res.json(snapshot(match));
+});
+
+// -----------------------------------------------------------------------------
+// 1V1 TIMEOUT
+// -----------------------------------------------------------------------------
+app.post("/api/matchmaking/timeout", (req, res) => {
+  const match = getMatch(req);
+
+  const playerId = String(
+    req.body?.playerId || ""
+  );
+
+  if (!match) {
+    return res.status(404).json({
+      error: "match not found",
+    });
+  }
+
+  if (
+    !match.players.some(
+      (p) => p.id === playerId
+    )
+  ) {
+    return res.status(403).json({
+      error:
+        "player is not part of this match",
+    });
+  }
+
+  advanceMatch(match);
+
+  if (match.phase === "finished") {
+    return res.json(snapshot(match));
+  }
+
+  if (
+    match.phase !== "racing" ||
+    !match.firstSolverId ||
+    !match.deadlineAt
+  ) {
+    return res.json(snapshot(match));
+  }
+
+  if (Date.now() < match.deadlineAt) {
+    return res.json(snapshot(match));
+  }
+
+  const first =
+    match.players.find(
+      (p) =>
+        p.id ===
+        match.firstSolverId
+    );
+
+  const second =
+    match.players.find(
+      (p) =>
+        p.id !==
+        match.firstSolverId
+    );
+
+  if (second?.solvedAt !== null) {
+    const firstTime =
+      first?.solveTimeMs ??
+      Number.POSITIVE_INFINITY;
+
+    const secondTime =
+      second?.solveTimeMs ??
+      Number.POSITIVE_INFINITY;
+
+    match.phase = "finished";
+
+    match.winnerId =
+      secondTime < firstTime
+        ? second.id
+        : first?.id ?? null;
+
+    match.loserId =
+      secondTime < firstTime
+        ? first?.id ?? null
+        : second.id;
+
+    return res.json(snapshot(match));
+  }
+
+  match.phase = "finished";
+
+  match.winnerId =
+    first?.id ?? null;
+
+  match.loserId =
+    second?.id ?? null;
+
+  return res.json(snapshot(match));
+});
+
+// -----------------------------------------------------------------------------
+// 1V1 LEAVE
+// -----------------------------------------------------------------------------
+app.post("/api/matchmaking/leave", (req, res) => {
+  queue.delete(
+    String(
+      req.body?.playerId || ""
+    )
+  );
+
+  return res.json({
+    ok: true,
+  });
+});
 
 // =============================================================================
 // TWIST LEAGUE
 // =============================================================================
+const twistLeagueQueue = new Map();
+const twistLeagueMatches = new Map();
+const twistLeagueTournaments = new Map();
 
-const twistLeagueQueue =
-  new Map();
+const TWIST_QUEUE_TTL_MS = 15000;
 
-const twistLeagueMatches =
-  new Map();
+const TWIST_PLAYER_CAPACITY = 4;
 
-const twistLeagueTournaments =
-  new Map();
+const TWIST_SERIES_WINS = 3;
 
-const TWIST_QUEUE_TTL_MS =
-  15000;
+const TWIST_FINISH_WINDOW_MS = 15000;
 
-const TWIST_PLAYER_CAPACITY =
-  4;
+const TWIST_START_DELAY_MS = 3000;
 
-const TWIST_SERIES_WINS =
-  3;
+// -----------------------------------------------------------------------------
+// NEW:
+// 90 second READY window.
+//
+// After the bracket displays the scramble:
+//
+// - both READY -> normal 3 2 1
+// - only one READY when timer expires -> READY player wins the round
+// - nobody READY when timer expires -> NO ONE gets a point
+//   and the next game starts
+//
+// This is per game.
+// -----------------------------------------------------------------------------
+const TWIST_READY_TIMEOUT_MS = 90000;
 
-const TWIST_FINISH_WINDOW_MS =
-  15000;
+// -----------------------------------------------------------------------------
+// HEARTBEAT
+// -----------------------------------------------------------------------------
+const TWIST_HEARTBEAT_INTERVAL_MS = 1000;
 
-const TWIST_START_DELAY_MS =
-  3000;
-
-// 90-second ready window.
-const TWIST_READY_TIMEOUT_MS =
-  90_000;
-
-// Heartbeat every second.
-const TWIST_HEARTBEAT_INTERVAL_MS =
-  1000;
-
-// A temporary network loss may reconnect within this window.
-const TWIST_DISCONNECT_TIMEOUT_MS =
-  12_000;
+const TWIST_DISCONNECT_TIMEOUT_MS = 12000;
 
 // =============================================================================
 // QUEUE CLEANUP
 // =============================================================================
-
 function cleanupTwistLeagueQueue() {
-  const now =
-    Date.now();
+  const now = Date.now();
 
   for (
-    const [
-      key,
-      entry,
-    ] of twistLeagueQueue
+    const [key, entry] of
+      twistLeagueQueue
   ) {
     if (
       !entry.joinedAt ||
-      now -
-        entry.joinedAt >
+      now - entry.joinedAt >
         TWIST_QUEUE_TTL_MS
     ) {
-      twistLeagueQueue.delete(
-        key
-      );
+      twistLeagueQueue.delete(key);
     }
   }
 }
 
 // =============================================================================
-// FINISHED CHECK
+// TOURNAMENT FINISHED CHECK
 // =============================================================================
-
 function isTwistTournamentFinished(
   tournament
 ) {
@@ -862,15 +696,11 @@ function isTwistTournamentFinished(
     return true;
   }
 
-  if (
-    tournament.championId
-  ) {
+  if (tournament.championId) {
     return true;
   }
 
-  if (
-    tournament.finalMatchId
-  ) {
+  if (tournament.finalMatchId) {
     const finalMatch =
       twistLeagueMatches.get(
         tournament.finalMatchId
@@ -890,9 +720,8 @@ function isTwistTournamentFinished(
 }
 
 // =============================================================================
-// ACTIVE TOURNAMENT BY PLAYER
+// FIND ACTIVE TOURNAMENT
 // =============================================================================
-
 function findActiveTwistTournamentByPlayerId(
   playerId
 ) {
@@ -922,9 +751,8 @@ function findActiveTwistTournamentByPlayerId(
 }
 
 // =============================================================================
-// ACTIVE MATCH BY PLAYER
+// FIND ACTIVE MATCH
 // =============================================================================
-
 function findActiveTwistMatchByPlayerId(
   playerId
 ) {
@@ -933,7 +761,8 @@ function findActiveTwistMatchByPlayerId(
       twistLeagueMatches.values()
   ) {
     if (
-      match.phase !== "finished" &&
+      match.phase !==
+        "finished" &&
       match.players.some(
         (player) =>
           player.id === playerId
@@ -947,9 +776,8 @@ function findActiveTwistMatchByPlayerId(
 }
 
 // =============================================================================
-// ANY TOURNAMENT BY PLAYER
+// FIND ANY HISTORICAL TOURNAMENT
 // =============================================================================
-
 function findTwistTournamentByPlayerId(
   playerId
 ) {
@@ -972,9 +800,8 @@ function findTwistTournamentByPlayerId(
 }
 
 // =============================================================================
-// CREATE PLAYER
+// CREATE TOURNAMENT PLAYER
 // =============================================================================
-
 function createTwistPlayer(
   id,
   username,
@@ -985,47 +812,35 @@ function createTwistPlayer(
     username,
     seed,
 
-    semFinalMatchId:
-      null,
+    semFinalMatchId: null,
 
-    finalMatchId:
-      null,
+    finalMatchId: null,
 
-    status:
-      "waiting",
+    status: "waiting",
 
-    eliminated:
-      false,
+    eliminated: false,
 
-    lastSeenAt:
-      Date.now(),
+    lastSeenAt: Date.now(),
   };
 }
 
 // =============================================================================
 // CREATE MATCH
 // =============================================================================
-
 function createTwistMatch({
   tournamentId,
   stage,
   slot,
   players,
 }) {
-  const seriesWins =
-    {};
+  const seriesWins = {};
 
-  for (
-    const player of players
-  ) {
-    seriesWins[
-      player.id
-    ] = 0;
+  for (const player of players) {
+    seriesWins[player.id] = 0;
   }
 
   return {
-    id:
-      randomUUID(),
+    id: randomUUID(),
 
     tournamentId,
 
@@ -1033,152 +848,68 @@ function createTwistMatch({
 
     slot,
 
-    format:
-      "BO3",
+    format: "BO3",
 
-    capacity:
-      2,
+    capacity: 2,
 
-    phase:
-      "ready",
+    phase: "ready",
 
-    scramble:
-      generateScramble(),
+    scramble: generateScramble(),
 
-    raceStartAt:
-      null,
+    raceStartAt: null,
 
+    firstSolverId: null,
+
+    deadlineAt: null,
+
+    // -------------------------------------------------------------------------
+    // READY DEADLINE
+    // -------------------------------------------------------------------------
     readyDeadlineAt:
       Date.now() +
       TWIST_READY_TIMEOUT_MS,
 
-    firstSolverId:
-      null,
+    winnerId: null,
 
-    deadlineAt:
-      null,
-
-    winnerId:
-      null,
-
-    loserId:
-      null,
+    loserId: null,
 
     seriesWins,
 
-    gameNumber:
-      1,
+    gameNumber: 1,
 
-    seriesWinnerId:
-      null,
+    seriesWinnerId: null,
 
-    forfeit:
-      false,
+    forfeit: false,
 
-    forfeitedPlayerId:
-      null,
+    forfeitedPlayerId: null,
 
-    lastGameResult:
-      null,
+    lastGameResult: null,
 
-    players:
-      players.map(
-        (player) => ({
-          id:
-            player.id,
+    players: players.map(
+      (player) => ({
+        id: player.id,
 
-          username:
-            player.username,
+        username: player.username,
 
-          ready:
-            false,
+        ready: false,
 
-          startedAt:
-            null,
+        startedAt: null,
 
-          solvedAt:
-            null,
+        solvedAt: null,
 
-          solveTimeMs:
-            null,
+        solveTimeMs: null,
 
-          lastSeenAt:
-            player.lastSeenAt ??
-            Date.now(),
-        })
-      ),
+        lastSeenAt:
+          player.lastSeenAt ??
+          Date.now(),
+      })
+    ),
   };
-}
-
-// =============================================================================
-// PREPARE NEXT GAME
-// =============================================================================
-
-function prepareNextTwistGame(
-  match
-) {
-  match.gameNumber += 1;
-
-  match.scramble =
-    generateScramble();
-
-  match.phase =
-    "ready";
-
-  match.raceStartAt =
-    null;
-
-  match.readyDeadlineAt =
-    Date.now() +
-    TWIST_READY_TIMEOUT_MS;
-
-  match.firstSolverId =
-    null;
-
-  match.deadlineAt =
-    null;
-
-  match.winnerId =
-    null;
-
-  match.loserId =
-    null;
-
-  match.forfeit =
-    false;
-
-  match.forfeitedPlayerId =
-    null;
-
-  match.lastGameResult =
-    null;
-
-  for (
-    const player of match.players
-  ) {
-    player.ready =
-      false;
-
-    player.startedAt =
-      null;
-
-    player.solvedAt =
-      null;
-
-    player.solveTimeMs =
-      null;
-
-    player.lastSeenAt =
-      Date.now();
-  }
-
-  return match;
 }
 
 // =============================================================================
 // BRACKET SNAPSHOT
 // =============================================================================
-
 function getTwistTournamentBracket(
   tournament
 ) {
@@ -1217,18 +948,15 @@ function getTwistTournamentBracket(
             (player) =>
               player.id ===
               tournament.championId
-          )?.username ??
-          null
+          )?.username ?? null
         : null,
 
     slots:
       tournament.players.map(
         (player) => ({
-          seed:
-            player.seed,
+          seed: player.seed,
 
-          id:
-            player.id,
+          id: player.id,
 
           username:
             player.username,
@@ -1264,9 +992,8 @@ function getTwistTournamentBracket(
             matchId:
               semi.matchId,
 
-            playerIds: [
-              ...semi.playerIds,
-            ],
+            playerIds:
+              [...semi.playerIds],
 
             winnerId:
               semi.winnerId,
@@ -1292,16 +1019,11 @@ function getTwistTournamentBracket(
                     gameNumber:
                       semiMatch.gameNumber,
 
-                    readyDeadlineAt:
-                      semiMatch.readyDeadlineAt ??
-                      null,
-
-                    seriesWins: {
-                      ...(
-                        semiMatch.seriesWins ??
-                        {}
-                      ),
-                    },
+                    seriesWins:
+                      {
+                        ...(semiMatch.seriesWins ??
+                          {}),
+                      },
 
                     seriesWinnerId:
                       semiMatch.seriesWinnerId ??
@@ -1344,9 +1066,10 @@ function getTwistTournamentBracket(
       matchId:
         tournament.finalMatchId,
 
-      playerIds: [
-        ...tournament.finalPlayerIds,
-      ],
+      playerIds:
+        [
+          ...tournament.finalPlayerIds,
+        ],
 
       winnerId:
         tournament.phase ===
@@ -1376,16 +1099,11 @@ function getTwistTournamentBracket(
               gameNumber:
                 finalMatch.gameNumber,
 
-              readyDeadlineAt:
-                finalMatch.readyDeadlineAt ??
-                null,
-
-              seriesWins: {
-                ...(
-                  finalMatch.seriesWins ??
-                  {}
-                ),
-              },
+              seriesWins:
+                {
+                  ...(finalMatch.seriesWins ??
+                    {}),
+                },
 
               seriesWinnerId:
                 finalMatch.seriesWinnerId ??
@@ -1427,10 +1145,23 @@ function getTwistTournamentBracket(
 // =============================================================================
 // MATCH CLOCK
 // =============================================================================
-
 function advanceTwistLeagueMatch(
   match
 ) {
+  // ---------------------------------------------------------------------------
+  // READY PHASE
+  // ---------------------------------------------------------------------------
+  if (
+    match.phase ===
+      "ready"
+  ) {
+    // Nobody has started race yet.
+    // Wait for both ready OR ready timeout.
+  }
+
+  // ---------------------------------------------------------------------------
+  // RACING PHASE
+  // ---------------------------------------------------------------------------
   if (
     match.phase ===
       "ready" &&
@@ -1442,11 +1173,9 @@ function advanceTwistLeagueMatch(
     match.phase =
       "racing";
 
-    match.readyDeadlineAt =
-      null;
-
     for (
-      const player of match.players
+      const player of
+        match.players
     ) {
       if (
         player.startedAt ===
@@ -1464,7 +1193,6 @@ function advanceTwistLeagueMatch(
 // =============================================================================
 // TOURNAMENT FOR MATCH
 // =============================================================================
-
 function getTwistTournamentForMatch(
   match
 ) {
@@ -1474,9 +1202,106 @@ function getTwistTournamentForMatch(
 }
 
 // =============================================================================
-// COMPLETE SERIES
+// RESET MATCH FOR NEXT GAME
 // =============================================================================
+function resetTwistMatchForNextGame(
+  match,
+  preserveSeries = true
+) {
+  match.gameNumber += 1;
 
+  match.scramble =
+    generateScramble();
+
+  match.phase =
+    "ready";
+
+  match.raceStartAt =
+    null;
+
+  match.firstSolverId =
+    null;
+
+  match.deadlineAt =
+    null;
+
+  match.readyDeadlineAt =
+    Date.now() +
+    TWIST_READY_TIMEOUT_MS;
+
+  match.winnerId =
+    null;
+
+  match.loserId =
+    null;
+
+  match.forfeit =
+    false;
+
+  match.forfeitedPlayerId =
+    null;
+
+  match.lastGameResult =
+    null;
+
+  if (!preserveSeries) {
+    for (
+      const player of
+        match.players
+    ) {
+      match.seriesWins[
+        player.id
+      ] = 0;
+    }
+  }
+
+  for (
+    const player of
+      match.players
+  ) {
+    player.ready =
+      false;
+
+    player.lastSeenAt =
+      Date.now();
+
+    player.startedAt =
+      null;
+
+    player.solvedAt =
+      null;
+
+    player.solveTimeMs =
+      null;
+  }
+
+  return match;
+}
+
+// =============================================================================
+// SET SERIES WIN
+// =============================================================================
+function addSeriesWin(
+  match,
+  winnerId
+) {
+  if (!winnerId) {
+    return;
+  }
+
+  match.seriesWins[
+    winnerId
+  ] =
+    Number(
+      match.seriesWins[
+        winnerId
+      ] || 0
+    ) + 1;
+}
+
+// =============================================================================
+// COMPLETE BO3
+// =============================================================================
 function completeTwistSeriesIfNeeded(
   match
 ) {
@@ -1499,7 +1324,8 @@ function completeTwistSeriesIfNeeded(
   const loserId =
     match.players.find(
       (player) =>
-        player.id !== winnerId
+        player.id !==
+        winnerId
     )?.id ?? null;
 
   match.seriesWinnerId =
@@ -1517,10 +1343,10 @@ function completeTwistSeriesIfNeeded(
   match.raceStartAt =
     null;
 
-  match.readyDeadlineAt =
+  match.deadlineAt =
     null;
 
-  match.deadlineAt =
+  match.readyDeadlineAt =
     null;
 
   const tournament =
@@ -1532,6 +1358,9 @@ function completeTwistSeriesIfNeeded(
     return true;
   }
 
+  // ---------------------------------------------------------------------------
+  // SEMIFINAL COMPLETE
+  // ---------------------------------------------------------------------------
   if (
     match.stage ===
     "semifinal"
@@ -1544,6 +1373,9 @@ function completeTwistSeriesIfNeeded(
     return true;
   }
 
+  // ---------------------------------------------------------------------------
+  // ACTUAL FINAL COMPLETE
+  // ---------------------------------------------------------------------------
   if (
     match.stage ===
     "final"
@@ -1557,13 +1389,15 @@ function completeTwistSeriesIfNeeded(
     const winner =
       tournament.players.find(
         (player) =>
-          player.id === winnerId
+          player.id ===
+          winnerId
       );
 
     const loser =
       tournament.players.find(
         (player) =>
-          player.id === loserId
+          player.id ===
+          loserId
       );
 
     if (winner) {
@@ -1579,7 +1413,7 @@ function completeTwistSeriesIfNeeded(
         "final-loser";
 
       loser.eliminated =
-        false;
+        true;
     }
   }
 
@@ -1587,16 +1421,73 @@ function completeTwistSeriesIfNeeded(
 }
 
 // =============================================================================
-// CREATE TOURNAMENT
+// SNAPSHOT
+// IMPORTANT: THIS FUNCTION WAS MISSING IN YOUR SERVER
 // =============================================================================
+function twistLeagueSnapshot(
+  match
+) {
+  advanceTwistLeagueMatch(
+    match
+  );
 
+  const tournament =
+    getTwistTournamentForMatch(
+      match
+    );
+
+  return {
+    ...match,
+
+    tournamentId:
+      tournament?.id ??
+      match.tournamentId,
+
+    bracket:
+      tournament
+        ? getTwistTournamentBracket(
+            tournament
+          )
+        : null,
+
+    players:
+      match.players.map(
+        (player) => ({
+          ...player,
+        })
+      ),
+  };
+}
+
+// =============================================================================
+// GET TWIST LEAGUE MATCH
+// IMPORTANT: THIS FUNCTION WAS ALSO MISSING IN YOUR SERVER
+// =============================================================================
+function getTwistLeagueMatch(
+  req
+) {
+  const id = String(
+    req.body?.matchId ??
+      req.query?.matchId ??
+      ""
+  );
+
+  return twistLeagueMatches.get(
+    id
+  );
+}
+
+// =============================================================================
+// SEMIFINAL STATUS
+// =============================================================================
 function assignSemifinalStatus(
   tournament,
   playerIds,
   matchId
 ) {
   for (
-    const id of playerIds
+    const id of
+      playerIds
   ) {
     const player =
       tournament.players.find(
@@ -1619,15 +1510,15 @@ function assignSemifinalStatus(
   }
 }
 
+// =============================================================================
+// CREATE 4 PLAYER TOURNAMENT
+// =============================================================================
 function createFourPlayerTwistTournament(
   entries
 ) {
   const players =
     entries.map(
-      (
-        entry,
-        index
-      ) =>
+      (entry, index) =>
         createTwistPlayer(
           entry.playerId,
           entry.username,
@@ -1774,7 +1665,6 @@ function createFourPlayerTwistTournament(
 // =============================================================================
 // CREATE FINAL OR WALKOVER
 // =============================================================================
-
 function createFinalIfReady(
   tournament
 ) {
@@ -1785,11 +1675,17 @@ function createFinalIfReady(
     return;
   }
 
-  if (
-    !tournament.semifinals.every(
+  const completed =
+    tournament.semifinals.filter(
       (entry) =>
         entry.complete
-    )
+    );
+
+  // If one or both semifinal matches are still ongoing,
+  // do nothing.
+  if (
+    completed.length !==
+    2
   ) {
     return;
   }
@@ -1802,7 +1698,9 @@ function createFinalIfReady(
       )
       .filter(Boolean);
 
-  // TWO WINNERS = REAL FINAL
+  // ---------------------------------------------------------------------------
+  // TWO WINNERS
+  // ---------------------------------------------------------------------------
   if (
     winners.length ===
     2
@@ -1859,7 +1757,8 @@ function createFinalIfReady(
       finalMatch.id;
 
     for (
-      const player of finalPlayers
+      const player of
+        finalPlayers
     ) {
       player.finalMatchId =
         finalMatch.id;
@@ -1879,27 +1778,35 @@ function createFinalIfReady(
     return;
   }
 
+  // ---------------------------------------------------------------------------
   // ONE WINNER = WALKOVER
   //
-  // This only becomes champion when the other semifinal
-  // finalist has explicitly LEFT.
+  // This only happens when the other semifinal has been completely
+  // invalidated / abandoned and therefore has no eligible winner.
+  // ---------------------------------------------------------------------------
   if (
     winners.length ===
     1
   ) {
-    const onlyWinnerId =
+    const championId =
       winners[0];
 
-    const onlyWinner =
+    const champion =
       tournament.players.find(
         (player) =>
           player.id ===
-          onlyWinnerId
+          championId
       );
 
-    if (!onlyWinner) {
+    if (!champion) {
       tournament.championId =
         null;
+
+      tournament.finalMatchId =
+        null;
+
+      tournament.finalPlayerIds =
+        [];
 
       tournament.phase =
         "finished";
@@ -1908,7 +1815,7 @@ function createFinalIfReady(
     }
 
     tournament.championId =
-      onlyWinnerId;
+      championId;
 
     tournament.finalMatchId =
       null;
@@ -1919,10 +1826,10 @@ function createFinalIfReady(
     tournament.phase =
       "finished";
 
-    onlyWinner.status =
+    champion.status =
       "champion";
 
-    onlyWinner.eliminated =
+    champion.eliminated =
       false;
 
     for (
@@ -1931,7 +1838,7 @@ function createFinalIfReady(
     ) {
       if (
         player.id ===
-        onlyWinnerId
+        championId
       ) {
         continue;
       }
@@ -1951,7 +1858,9 @@ function createFinalIfReady(
     return;
   }
 
+  // ---------------------------------------------------------------------------
   // ZERO WINNERS
+  // ---------------------------------------------------------------------------
   tournament.championId =
     null;
 
@@ -1966,9 +1875,8 @@ function createFinalIfReady(
 }
 
 // =============================================================================
-// SEMIFINAL WINNER
+// PROMOTE SEMIFINAL WINNER
 // =============================================================================
-
 function promoteSemifinalWinner(
   tournament,
   match
@@ -2034,12 +1942,252 @@ function promoteSemifinalWinner(
 }
 
 // =============================================================================
-// FORFEIT
+// READY TIMEOUT
 //
-// EXIT = immediate.
+// Rules:
+//
+// 1. Both READY before 90 sec:
+//      normal battle
+//
+// 2. Only player A READY:
+//      player A wins round automatically
+//
+// 3. Only player B READY:
+//      player B wins round automatically
+//
+// 4. Nobody READY:
+//      nobody wins
+//      no series point
+//      next game
+//
+// This never assigns Champion directly.
+// It only awards a round point.
+// =============================================================================
+function resolveReadyTimeout(
+  match
+) {
+  if (
+    !match ||
+    match.phase !== "ready"
+  ) {
+    return false;
+  }
+
+  if (
+    match.raceStartAt !== null
+  ) {
+    return false;
+  }
+
+  if (
+    !match.readyDeadlineAt
+  ) {
+    return false;
+  }
+
+  const now =
+    Date.now();
+
+  if (
+    now <
+    match.readyDeadlineAt
+  ) {
+    return false;
+  }
+
+  const readyPlayers =
+    match.players.filter(
+      (player) =>
+        player.ready
+    );
+
+  // ---------------------------------------------------------------------------
+  // NOBODY READY
+  // ---------------------------------------------------------------------------
+  if (
+    readyPlayers.length ===
+    0
+  ) {
+    match.lastGameResult = {
+      gameNumber:
+        match.gameNumber,
+
+      winnerId:
+        null,
+
+      loserId:
+        null,
+
+      playerTimes: {},
+
+      seriesWins: {
+        ...match.seriesWins,
+      },
+
+      noReady:
+        true,
+    };
+
+    resetTwistMatchForNextGame(
+      match,
+      true
+    );
+
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // EXACTLY ONE READY
+  // ---------------------------------------------------------------------------
+  if (
+    readyPlayers.length ===
+    1
+  ) {
+    const winnerId =
+      readyPlayers[0].id;
+
+    const loser =
+      match.players.find(
+        (player) =>
+          player.id !==
+          winnerId
+      );
+
+    match.winnerId =
+      winnerId;
+
+    match.loserId =
+      loser?.id ?? null;
+
+    match.lastGameResult = {
+      gameNumber:
+        match.gameNumber,
+
+      winnerId:
+        winnerId,
+
+      loserId:
+        loser?.id ?? null,
+
+      playerTimes: {},
+
+      seriesWins: {
+        ...match.seriesWins,
+      },
+
+      readyForfeit:
+        true,
+    };
+
+    addSeriesWin(
+      match,
+      winnerId
+    );
+
+    match.readyDeadlineAt =
+      null;
+
+    match.raceStartAt =
+      null;
+
+    match.firstSolverId =
+      null;
+
+    match.deadlineAt =
+      null;
+
+    match.phase =
+      "finished";
+
+    completeTwistSeriesIfNeeded(
+      match
+    );
+
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // BOTH READY
+  //
+  // This shouldn't normally happen after deadline because START should
+  // already have been called, but leave safe handling here.
+  // ---------------------------------------------------------------------------
+  if (
+    readyPlayers.length ===
+    2
+  ) {
+    match.readyDeadlineAt =
+      null;
+
+    return false;
+  }
+
+  return false;
+}
+
+// =============================================================================
+// RECONNECT-SAFE JOIN / BRACKET VIEW
+// =============================================================================
+function getSpectatorResponse(
+  tournament,
+  playerId,
+  username
+) {
+  const player =
+    tournament.players.find(
+      (p) =>
+        p.id === playerId
+    );
+
+  if (player) {
+    player.username =
+      username;
+  }
+
+  const matchId =
+    player?.finalMatchId ??
+    player?.semFinalMatchId ??
+    null;
+
+  const match =
+    matchId
+      ? twistLeagueMatches.get(
+          matchId
+        )
+      : null;
+
+  return {
+    status:
+      "spectating",
+
+    playerId,
+
+    players:
+      TWIST_PLAYER_CAPACITY,
+
+    capacity:
+      TWIST_PLAYER_CAPACITY,
+
+    match:
+      match
+        ? twistLeagueSnapshot(
+            match
+          )
+        : null,
+
+    bracket:
+      getTwistTournamentBracket(
+        tournament
+      ),
+  };
+}
+
+// =============================================================================
+// FORFEIT / EXIT
+//
+// Explicit EXIT = instant loss.
 // No heartbeat grace.
 // =============================================================================
-
 function forfeitTwistMatch(
   match,
   exitingPlayerId
@@ -2076,9 +2224,6 @@ function forfeitTwistMatch(
     match.loserId =
       exitingPlayerId;
 
-    match.readyDeadlineAt =
-      null;
-
     return;
   }
 
@@ -2086,6 +2231,7 @@ function forfeitTwistMatch(
     exitingPlayer.ready =
       false;
 
+    // Heartbeat no longer matters after explicit EXIT.
     exitingPlayer.lastSeenAt =
       0;
   }
@@ -2102,10 +2248,10 @@ function forfeitTwistMatch(
   match.raceStartAt =
     null;
 
-  match.readyDeadlineAt =
+  match.deadlineAt =
     null;
 
-  match.deadlineAt =
+  match.readyDeadlineAt =
     null;
 
   match.firstSolverId =
@@ -2117,23 +2263,11 @@ function forfeitTwistMatch(
   match.loserId =
     exitingPlayerId;
 
-  // Immediate 3-0.
-  for (
-    const player of
-      match.players
-  ) {
-    match.seriesWins[
-      player.id
-    ] =
-      player.id ===
-      winnerPlayer.id
-        ? TWIST_SERIES_WINS
-        : Number(
-            match.seriesWins[
-              player.id
-            ] || 0
-          );
-  }
+  // Immediate series win by forfeit.
+  match.seriesWins[
+    winnerPlayer.id
+  ] =
+    TWIST_SERIES_WINS;
 
   match.seriesWinnerId =
     winnerPlayer.id;
@@ -2147,7 +2281,9 @@ function forfeitTwistMatch(
     return;
   }
 
-  // SEMIFINAL FORFEIT
+  // ---------------------------------------------------------------------------
+  // SEMIFINAL
+  // ---------------------------------------------------------------------------
   if (
     match.stage ===
     "semifinal"
@@ -2160,7 +2296,9 @@ function forfeitTwistMatch(
     return;
   }
 
-  // FINAL FORFEIT
+  // ---------------------------------------------------------------------------
+  // FINAL
+  // ---------------------------------------------------------------------------
   if (
     match.stage ===
     "final"
@@ -2174,8 +2312,9 @@ function forfeitTwistMatch(
     tournament.finalMatchId =
       match.id;
 
-    tournament.finalPlayerIds =
-      [winnerPlayer.id];
+    tournament.finalPlayerIds = [
+      winnerPlayer.id,
+    ];
 
     const winner =
       tournament.players.find(
@@ -2201,24 +2340,27 @@ function forfeitTwistMatch(
 
     if (loser) {
       loser.status =
-        "final-loser";
+        "left";
 
       loser.eliminated =
-        false;
+        true;
     }
   }
 }
 
 // =============================================================================
-// SEMIFINAL WINNER EXIT
+// REMOVE SEMIFINAL WINNER FROM FINAL ELIGIBILITY
 // =============================================================================
-
 function resolveSemifinalExitWalkover(
   tournament,
   exitingPlayerId
 ) {
+  if (!tournament) {
+    return;
+  }
+
+  // Do not modify a finished tournament.
   if (
-    !tournament ||
     isTwistTournamentFinished(
       tournament
     )
@@ -2237,6 +2379,8 @@ function resolveSemifinalExitWalkover(
       semi.winnerId =
         null;
 
+      // The semifinal itself remains complete.
+      // We are only removing the winner's Final eligibility.
       semi.complete =
         true;
     }
@@ -2267,15 +2411,16 @@ function resolveSemifinalExitWalkover(
       null;
   }
 
+  // If both semifinals are complete,
+  // resolve Final/walkover.
   createFinalIfReady(
     tournament
   );
 }
 
 // =============================================================================
-// HEARTBEAT
+// HEARTBEAT TOUCH
 // =============================================================================
-
 function touchTwistPlayer(
   match,
   playerId
@@ -2301,6 +2446,7 @@ function touchTwistPlayer(
         p.id === playerId
     );
 
+  // Explicitly exited player cannot revive through heartbeat.
   if (
     tournamentPlayer?.status ===
     "left"
@@ -2322,6 +2468,9 @@ function touchTwistPlayer(
   return true;
 }
 
+// =============================================================================
+// DISCONNECT WATCHDOG
+// =============================================================================
 function resolveTwistDisconnects() {
   const now =
     Date.now();
@@ -2372,8 +2521,7 @@ function resolveTwistDisconnects() {
 
           const lastSeen =
             Number(
-              player.lastSeenAt ||
-                0
+              player.lastSeenAt || 0
             );
 
           return (
@@ -2385,8 +2533,8 @@ function resolveTwistDisconnects() {
         }
       );
 
-    // Both disconnected at exactly the same time:
-    // do not arbitrarily award a win.
+    // Both gone simultaneously:
+    // don't arbitrarily award the match.
     if (
       stale.length !==
       1
@@ -2416,16 +2564,43 @@ function resolveTwistDisconnects() {
 }
 
 // =============================================================================
+// READY TIMEOUT WATCHDOG
+// =============================================================================
+function resolveTwistReadyTimeouts() {
+  for (
+    const match of
+      twistLeagueMatches.values()
+  ) {
+    if (
+      !match ||
+      match.phase !==
+        "ready"
+    ) {
+      continue;
+    }
+
+    const changed =
+      resolveReadyTimeout(
+        match
+      );
+
+    if (!changed) {
+      continue;
+    }
+
+    // Nothing else needed here.
+    // State will be observed by clients through polling/heartbeat.
+  }
+}
+
+// =============================================================================
 // HEARTBEAT ENDPOINT
 // =============================================================================
-
 app.post(
   "/api/twist-league/heartbeat",
   (req, res) => {
     const match =
-      getTwistLeagueMatch(
-        req
-      );
+      getTwistLeagueMatch(req);
 
     const playerId =
       String(
@@ -2434,22 +2609,27 @@ app.post(
       );
 
     if (!match) {
-      return res.status(404).json({
-        error:
-          "twist league match not found",
-      });
+      return res
+        .status(404)
+        .json({
+          error:
+            "twist league match not found",
+        });
     }
 
+    // If the player explicitly exited, don't revive them.
     if (
       !touchTwistPlayer(
         match,
         playerId
       )
     ) {
-      return res.status(403).json({
-        error:
-          "player is not part of this match or already left",
-      });
+      return res
+        .status(403)
+        .json({
+          error:
+            "player is not part of this match or already left",
+        });
     }
 
     return res.json(
@@ -2463,118 +2643,124 @@ app.post(
 // =============================================================================
 // DEBUG
 // =============================================================================
-
 app.get(
   "/api/twist-league/debug",
   (_req, res) => {
     cleanupTwistLeagueQueue();
 
-    res.json({
+    return res.json({
       ok: true,
 
-      queuedPlayers: [
-        ...twistLeagueQueue.values(),
-      ].map((entry) => ({
-        playerId:
-          entry.playerId,
+      queuedPlayers:
+        [
+          ...twistLeagueQueue.values()
+        ].map(
+          (entry) => ({
+            playerId:
+              entry.playerId,
 
-        username:
-          entry.username,
-      })),
+            username:
+              entry.username,
+          })
+        ),
 
-      tournaments: [
-        ...twistLeagueTournaments.values(),
-      ].map((tournament) => ({
-        id:
-          tournament.id,
+      tournaments:
+        [
+          ...twistLeagueTournaments.values()
+        ].map(
+          (tournament) => ({
+            id:
+              tournament.id,
 
-        phase:
-          tournament.phase,
+            phase:
+              tournament.phase,
 
-        championId:
-          tournament.championId,
+            championId:
+              tournament.championId,
 
-        players:
-          tournament.players,
+            players:
+              tournament.players,
 
-        bracket:
-          getTwistTournamentBracket(
-            tournament
-          ),
-      })),
+            bracket:
+              getTwistTournamentBracket(
+                tournament
+              ),
+          })
+        ),
 
-      activeMatches: [
-        ...twistLeagueMatches.values(),
-      ].map((match) => ({
-        id:
-          match.id,
+      activeMatches:
+        [
+          ...twistLeagueMatches.values()
+        ].map(
+          (match) => ({
+            id:
+              match.id,
 
-        tournamentId:
-          match.tournamentId,
+            tournamentId:
+              match.tournamentId,
 
-        stage:
-          match.stage,
+            stage:
+              match.stage,
 
-        slot:
-          match.slot,
+            slot:
+              match.slot,
 
-        phase:
-          match.phase,
+            phase:
+              match.phase,
 
-        gameNumber:
-          match.gameNumber,
+            gameNumber:
+              match.gameNumber,
 
-        readyDeadlineAt:
-          match.readyDeadlineAt ??
-          null,
+            readyDeadlineAt:
+              match.readyDeadlineAt,
 
-        seriesWins:
-          match.seriesWins,
+            seriesWins:
+              match.seriesWins,
 
-        seriesWinnerId:
-          match.seriesWinnerId,
+            seriesWinnerId:
+              match.seriesWinnerId,
 
-        winnerId:
-          match.winnerId,
+            winnerId:
+              match.winnerId,
 
-        loserId:
-          match.loserId,
+            loserId:
+              match.loserId,
 
-        forfeit:
-          !!match.forfeit,
+            forfeit:
+              !!match.forfeit,
 
-        forfeitedPlayerId:
-          match.forfeitedPlayerId ??
-          null,
+            forfeitedPlayerId:
+              match.forfeitedPlayerId ??
+              null,
 
-        players:
-          match.players.map(
-            (player) => ({
-              id:
-                player.id,
+            players:
+              match.players.map(
+                (player) => ({
+                  id:
+                    player.id,
 
-              username:
-                player.username,
+                  username:
+                    player.username,
 
-              ready:
-                player.ready,
+                  ready:
+                    player.ready,
 
-              solveTimeMs:
-                player.solveTimeMs,
+                  solveTimeMs:
+                    player.solveTimeMs,
 
-              lastSeenAt:
-                player.lastSeenAt,
-            })
-          ),
-      })),
+                  lastSeenAt:
+                    player.lastSeenAt,
+                })
+              ),
+          })
+        ),
     });
   }
 );
 
 // =============================================================================
-// JOIN - 4 PLAYER LOBBY / SPECTATOR REJOIN
+// JOIN - 4 PLAYER LOBBY
 // =============================================================================
-
 app.post(
   "/api/twist-league/join",
   (req, res) => {
@@ -2594,7 +2780,6 @@ app.post(
     // -------------------------------------------------------------------------
     // ACTIVE TOURNAMENT
     // -------------------------------------------------------------------------
-
     const activeTournament =
       findActiveTwistTournamentByPlayerId(
         playerId
@@ -2604,38 +2789,36 @@ app.post(
       const player =
         activeTournament.players.find(
           (entry) =>
-            entry.id ===
-            playerId
+            entry.id === playerId
         );
 
+      // -----------------------------------------------------------------------
       // IMPORTANT:
-      // A player who already LEFT may re-open the tournament,
-      // but ONLY AS A SPECTATOR.
+      // An explicitly EXITED player may come back to VIEW the bracket.
+      // They are spectator only.
       //
-      // They cannot become active again.
+      // They are NOT allowed to:
+      //   - READY
+      //   - START
+      //   - SOLVE
+      //   - re-enter their old match
+      // -----------------------------------------------------------------------
       if (
         player?.status ===
         "left"
       ) {
-        return res.json({
-          status:
-            "spectator",
-
-          playerId,
-
-          players:
-            TWIST_PLAYER_CAPACITY,
-
-          capacity:
-            TWIST_PLAYER_CAPACITY,
-
-          bracket:
-            getTwistTournamentBracket(
-              activeTournament
-            ),
-        });
+        return res.json(
+          getSpectatorResponse(
+            activeTournament,
+            playerId,
+            username
+          )
+        );
       }
 
+      // -----------------------------------------------------------------------
+      // ACTIVE MATCH
+      // -----------------------------------------------------------------------
       const activeMatch =
         findActiveTwistMatchByPlayerId(
           playerId
@@ -2673,7 +2856,9 @@ app.post(
         });
       }
 
-      // Player is waiting between rounds.
+      // -----------------------------------------------------------------------
+      // BETWEEN MATCHES / BRACKET
+      // -----------------------------------------------------------------------
       if (player) {
         player.username =
           username;
@@ -2691,7 +2876,9 @@ app.post(
             )
           : undefined;
 
-      if (nextMatch) {
+      if (
+        nextMatch
+      ) {
         return res.json({
           status:
             "matched",
@@ -2733,18 +2920,21 @@ app.post(
     // -------------------------------------------------------------------------
     // HISTORICAL TOURNAMENT
     //
-    // If this is an unfinished tournament and the player had left,
-    // they may return ONLY to spectate.
-    //
-    // Finished tournament remains available as bracket history.
+    // A finished tournament never blocks a new tournament.
+    // An unfinished "left" record is returned as spectator if it is still the
+    // currently accessible tournament.
     // -------------------------------------------------------------------------
-
     const oldTournament =
       findTwistTournamentByPlayerId(
         playerId
       );
 
-    if (oldTournament) {
+    if (
+      oldTournament &&
+      !isTwistTournamentFinished(
+        oldTournament
+      )
+    ) {
       const oldPlayer =
         oldTournament.players.find(
           (entry) =>
@@ -2756,56 +2946,19 @@ app.post(
         oldPlayer?.status ===
         "left"
       ) {
-        return res.json({
-          status:
-            "spectator",
-
-          playerId,
-
-          players:
-            TWIST_PLAYER_CAPACITY,
-
-          capacity:
-            TWIST_PLAYER_CAPACITY,
-
-          bracket:
-            getTwistTournamentBracket(
-              oldTournament
-            ),
-        });
-      }
-
-      // Finished tournament:
-      // allow the user to view the final bracket.
-      if (
-        isTwistTournamentFinished(
-          oldTournament
-        )
-      ) {
-        return res.json({
-          status:
-            "spectator",
-
-          playerId,
-
-          players:
-            TWIST_PLAYER_CAPACITY,
-
-          capacity:
-            TWIST_PLAYER_CAPACITY,
-
-          bracket:
-            getTwistTournamentBracket(
-              oldTournament
-            ),
-        });
+        return res.json(
+          getSpectatorResponse(
+            oldTournament,
+            playerId,
+            username
+          )
+        );
       }
     }
 
     // -------------------------------------------------------------------------
     // QUEUE
     // -------------------------------------------------------------------------
-
     const existingQueueEntry =
       twistLeagueQueue.get(
         playerId
@@ -2830,7 +2983,7 @@ app.post(
 
     const entries =
       [
-        ...twistLeagueQueue.values(),
+        ...twistLeagueQueue.values()
       ].slice(
         0,
         TWIST_PLAYER_CAPACITY
@@ -2854,8 +3007,10 @@ app.post(
       });
     }
 
+    // Remove exactly four.
     for (
-      const entry of entries
+      const entry of
+        entries
     ) {
       twistLeagueQueue.delete(
         entry.playerId
@@ -2902,7 +3057,6 @@ app.post(
 // =============================================================================
 // STATE
 // =============================================================================
-
 app.get(
   "/api/twist-league/state",
   (req, res) => {
@@ -2912,11 +3066,16 @@ app.get(
       );
 
     if (!match) {
-      return res.status(404).json({
-        error:
-          "twist league match not found",
-      });
+      return res
+        .status(404)
+        .json({
+          error:
+            "twist league match not found",
+        });
     }
+
+    // Server may resolve ready timeout between polls.
+    resolveReadyTimeout(match);
 
     return res.json(
       twistLeagueSnapshot(
@@ -2929,7 +3088,6 @@ app.get(
 // =============================================================================
 // READY
 // =============================================================================
-
 app.post(
   "/api/twist-league/ready",
   (req, res) => {
@@ -2955,28 +3113,12 @@ app.post(
       !match ||
       !player
     ) {
-      return res.status(404).json({
-        error:
-          "twist league match/player not found",
-      });
-    }
-
-    // Resolve an expired 90-second ready timer first.
-    const resolved =
-      resolveTwistReadyTimeout(
-        match
-      );
-
-    if (
-      resolved &&
-      match.phase !==
-        "ready"
-    ) {
-      return res.json(
-        twistLeagueSnapshot(
-          match
-        )
-      );
+      return res
+        .status(404)
+        .json({
+          error:
+            "twist league match/player not found",
+        });
     }
 
     const tournament =
@@ -2991,51 +3133,57 @@ app.post(
           playerId
       );
 
-    // Explicitly left player can NEVER READY again.
+    // Explicitly exited player cannot re-enter this match.
     if (
       tournamentPlayer?.status ===
       "left"
     ) {
-      return res.status(403).json({
-        error:
-          "player already exited this tournament",
-      });
+      return res
+        .status(403)
+        .json({
+          error:
+            "player is spectating after exit",
+        });
     }
+
+    // If ready timeout already happened, resolve it first.
+    resolveReadyTimeout(match);
 
     if (
       match.phase !==
       "ready"
     ) {
-      return res.status(409).json({
-        error:
-          "match is not ready for READY state",
-      });
+      return res
+        .status(409)
+        .json({
+          error:
+            "match is no longer accepting READY",
+        });
     }
 
     if (
-      !touchTwistPlayer(
-        match,
-        playerId
-      )
+      match.readyDeadlineAt !==
+        null &&
+      Date.now() >=
+        match.readyDeadlineAt
     ) {
-      return res.status(403).json({
-        error:
-          "player is not active in this match",
-      });
+      resolveReadyTimeout(match);
+
+      return res
+        .status(409)
+        .json({
+          error:
+            "READY window has expired",
+        });
     }
+
+    touchTwistPlayer(
+      match,
+      playerId
+    );
 
     player.ready =
       true;
-
-    // Both ready = cancel the 90s ready timer.
-    if (
-      match.players.every(
-        (p) => p.ready
-      )
-    ) {
-      match.readyDeadlineAt =
-        null;
-    }
 
     return res.json(
       twistLeagueSnapshot(
@@ -3048,7 +3196,6 @@ app.post(
 // =============================================================================
 // START
 // =============================================================================
-
 app.post(
   "/api/twist-league/start",
   (req, res) => {
@@ -3066,32 +3213,44 @@ app.post(
     const player =
       match?.players.find(
         (p) =>
-          p.id === playerId
+          p.id ===
+          playerId
       );
 
     if (
       !match ||
       !player
     ) {
-      return res.status(404).json({
-        error:
-          "twist league match/player not found",
-      });
+      return res
+        .status(404)
+        .json({
+          error:
+            "twist league match/player not found",
+        });
     }
 
-    resolveTwistReadyTimeout(
-      match
-    );
+    const tournament =
+      getTwistTournamentForMatch(
+        match
+      );
+
+    const tournamentPlayer =
+      tournament?.players.find(
+        (p) =>
+          p.id ===
+          playerId
+      );
 
     if (
-      match.phase ===
-      "finished"
+      tournamentPlayer?.status ===
+      "left"
     ) {
-      return res.json(
-        twistLeagueSnapshot(
-          match
-        )
-      );
+      return res
+        .status(403)
+        .json({
+          error:
+            "player is spectating after exit",
+        });
     }
 
     touchTwistPlayer(
@@ -3099,37 +3258,56 @@ app.post(
       playerId
     );
 
+    resolveReadyTimeout(match);
+
+    if (
+      match.phase !==
+      "ready"
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            "match is no longer ready",
+        });
+    }
+
     if (
       match.players.length !==
       2
     ) {
-      return res.status(409).json({
-        error:
-          "Twist League match requires exactly 2 players per bracket game",
-      });
+      return res
+        .status(409)
+        .json({
+          error:
+            "Twist League match requires exactly 2 players",
+        });
     }
 
     if (
       !match.players.every(
-        (p) => p.ready
+        (p) =>
+          p.ready
       )
     ) {
-      return res.status(409).json({
-        error:
-          "both bracket players must be ready",
-      });
+      return res
+        .status(409)
+        .json({
+          error:
+            "both bracket players must be ready",
+        });
     }
 
     if (
       match.raceStartAt ===
       null
     ) {
-      match.readyDeadlineAt =
-        null;
-
       match.raceStartAt =
         Date.now() +
         TWIST_START_DELAY_MS;
+
+      match.readyDeadlineAt =
+        null;
     }
 
     return res.json(
@@ -3143,7 +3321,6 @@ app.post(
 // =============================================================================
 // SOLVE
 // =============================================================================
-
 app.post(
   "/api/twist-league/solve",
   (req, res) => {
@@ -3161,17 +3338,44 @@ app.post(
     const player =
       match?.players.find(
         (p) =>
-          p.id === playerId
+          p.id ===
+          playerId
       );
 
     if (
       !match ||
       !player
     ) {
-      return res.status(404).json({
-        error:
-          "twist league match/player not found",
-      });
+      return res
+        .status(404)
+        .json({
+          error:
+            "twist league match/player not found",
+        });
+    }
+
+    const tournament =
+      getTwistTournamentForMatch(
+        match
+      );
+
+    const tournamentPlayer =
+      tournament?.players.find(
+        (p) =>
+          p.id ===
+          playerId
+      );
+
+    if (
+      tournamentPlayer?.status ===
+      "left"
+    ) {
+      return res
+        .status(403)
+        .json({
+          error:
+            "player is spectating after exit",
+        });
     }
 
     touchTwistPlayer(
@@ -3249,7 +3453,9 @@ app.post(
           : calculated
       );
 
-    // Finish window.
+    // -------------------------------------------------------------------------
+    // SECOND SOLVER MISSED THE 15 SECOND WINDOW
+    // -------------------------------------------------------------------------
     if (
       match.deadlineAt !==
         null &&
@@ -3278,15 +3484,42 @@ app.post(
       if (
         first?.id
       ) {
-        match.seriesWins[
+        addSeriesWin(
+          match,
           first.id
-        ] =
-          Number(
-            match.seriesWins[
-              first.id
-            ] || 0
-          ) + 1;
+        );
       }
+
+      match.lastGameResult =
+        {
+          gameNumber:
+            match.gameNumber,
+
+          winnerId:
+            first?.id ??
+            null,
+
+          loserId:
+            player.id,
+
+          playerTimes:
+            {
+              [player.id]:
+                player.solveTimeMs,
+
+              ...(first?.id
+                ? {
+                    [first.id]:
+                      first.solveTimeMs,
+                  }
+                : {}),
+            },
+
+          seriesWins:
+            {
+              ...match.seriesWins,
+            },
+        };
 
       completeTwistSeriesIfNeeded(
         match
@@ -3308,7 +3541,9 @@ app.post(
     player.solveTimeMs =
       solveTimeMs;
 
-    // First solver.
+    // -------------------------------------------------------------------------
+    // FIRST SOLVER
+    // -------------------------------------------------------------------------
     if (
       match.firstSolverId ===
       null
@@ -3327,6 +3562,9 @@ app.post(
       );
     }
 
+    // -------------------------------------------------------------------------
+    // SECOND SOLVER
+    // -------------------------------------------------------------------------
     const first =
       match.players.find(
         (p) =>
@@ -3336,12 +3574,15 @@ app.post(
 
     if (
       !first ||
-      first.solveTimeMs === null
+      first.solveTimeMs ==
+        null
     ) {
-      return res.status(409).json({
-        error:
-          "first solver state is incomplete",
-      });
+      return res
+        .status(409)
+        .json({
+          error:
+            "first solver state is incomplete",
+        });
     }
 
     const secondTime =
@@ -3371,35 +3612,39 @@ app.post(
     match.phase =
       "finished";
 
-    match.seriesWins[
+    match.readyDeadlineAt =
+      null;
+
+    addSeriesWin(
+      match,
       winnerId
-    ] =
-      Number(
-        match.seriesWins[
-          winnerId
-        ] || 0
-      ) + 1;
+    );
 
-    match.lastGameResult = {
-      gameNumber:
-        match.gameNumber,
+    match.lastGameResult =
+      {
+        gameNumber:
+          match.gameNumber,
 
-      winnerId,
+        winnerId:
+          winnerId,
 
-      loserId,
+        loserId:
+          loserId,
 
-      playerTimes: {
-        [player.id]:
-          player.solveTimeMs,
+        playerTimes:
+          {
+            [player.id]:
+              player.solveTimeMs,
 
-        [first.id]:
-          first.solveTimeMs,
-      },
+            [first.id]:
+              first.solveTimeMs,
+          },
 
-      seriesWins: {
-        ...match.seriesWins,
-      },
-    };
+        seriesWins:
+          {
+            ...match.seriesWins,
+          },
+      };
 
     completeTwistSeriesIfNeeded(
       match
@@ -3416,7 +3661,6 @@ app.post(
 // =============================================================================
 // TIMEOUT
 // =============================================================================
-
 app.post(
   "/api/twist-league/timeout",
   (req, res) => {
@@ -3425,46 +3669,53 @@ app.post(
         req
       );
 
-    if (!match) {
-      return res.status(404).json({
-        error:
-          "twist league match not found",
-      });
-    }
-
     const playerId =
       String(
         req.body?.playerId ||
           ""
       );
 
+    if (!match) {
+      return res
+        .status(404)
+        .json({
+          error:
+            "twist league match not found",
+        });
+    }
+
     if (
       !match.players.some(
         (p) =>
-          p.id === playerId
+          p.id ===
+          playerId
       )
     ) {
-      return res.status(403).json({
-        error:
-          "player is not part of this match",
-      });
+      return res
+        .status(403)
+        .json({
+          error:
+            "player is not part of this match",
+        });
     }
 
-    // READY timeout gets first priority.
-    const readyResolved =
-      resolveTwistReadyTimeout(
-        match
-      );
-
+    // READY timeout can be resolved from this endpoint too.
     if (
-      readyResolved
+      match.phase ===
+      "ready"
     ) {
+      resolveReadyTimeout(match);
+
       return res.json(
         twistLeagueSnapshot(
           match
         )
       );
     }
+
+    advanceTwistLeagueMatch(
+      match
+    );
 
     if (
       match.phase ===
@@ -3476,10 +3727,6 @@ app.post(
         )
       );
     }
-
-    advanceTwistLeagueMatch(
-      match
-    );
 
     if (
       match.phase !==
@@ -3563,15 +3810,14 @@ app.post(
     match.loserId =
       loserId;
 
+    match.readyDeadlineAt =
+      null;
+
     if (winnerId) {
-      match.seriesWins[
+      addSeriesWin(
+        match,
         winnerId
-      ] =
-        Number(
-          match.seriesWins[
-            winnerId
-          ] || 0
-        ) + 1;
+      );
     }
 
     completeTwistSeriesIfNeeded(
@@ -3589,7 +3835,6 @@ app.post(
 // =============================================================================
 // NEXT GAME
 // =============================================================================
-
 app.post(
   "/api/twist-league/next-game",
   (req, res) => {
@@ -3605,24 +3850,57 @@ app.post(
       );
 
     if (!match) {
-      return res.status(404).json({
-        error:
-          "twist league match not found",
-      });
+      return res
+        .status(404)
+        .json({
+          error:
+            "twist league match not found",
+        });
     }
 
     const player =
       match.players.find(
         (p) =>
-          p.id === playerId
+          p.id ===
+          playerId
       );
 
     if (!player) {
-      return res.status(403).json({
-        error:
-          "player is not part of this match",
-      });
+      return res
+        .status(403)
+        .json({
+          error:
+            "player is not part of this match",
+        });
     }
+
+    const tournament =
+      getTwistTournamentForMatch(
+        match
+      );
+
+    const tournamentPlayer =
+      tournament?.players.find(
+        (p) =>
+          p.id ===
+          playerId
+      );
+
+    if (
+      tournamentPlayer?.status ===
+      "left"
+    ) {
+      return res.json(
+        twistLeagueSnapshot(
+          match
+        )
+      );
+    }
+
+    touchTwistPlayer(
+      match,
+      playerId
+    );
 
     if (
       match.seriesWinnerId
@@ -3634,21 +3912,26 @@ app.post(
       );
     }
 
-    // Already prepared next game.
+    // -------------------------------------------------------------------------
+    // NO READY GAME
+    //
+    // If server already created next game after a no-ready timeout,
+    // return it as-is.
+    // -------------------------------------------------------------------------
     if (
-      match.phase === "ready" &&
-      match.raceStartAt === null &&
-      match.readyDeadlineAt !== null &&
-      match.firstSolverId === null &&
-      match.deadlineAt === null &&
-      match.winnerId === null &&
-      match.loserId === null
+      match.phase ===
+        "ready" &&
+      match.raceStartAt ===
+        null &&
+      match.firstSolverId ===
+        null &&
+      match.deadlineAt ===
+        null &&
+      match.winnerId ===
+        null &&
+      match.loserId ===
+        null
     ) {
-      touchTwistPlayer(
-        match,
-        playerId
-      );
-
       return res.json(
         twistLeagueSnapshot(
           match
@@ -3660,10 +3943,12 @@ app.post(
       match.phase !==
       "finished"
     ) {
-      return res.status(409).json({
-        error:
-          "current game is not finished",
-      });
+      return res
+        .status(409)
+        .json({
+          error:
+            "current game is not finished",
+        });
     }
 
     if (
@@ -3676,13 +3961,9 @@ app.post(
       );
     }
 
-    prepareNextTwistGame(
-      match
-    );
-
-    touchTwistPlayer(
+    resetTwistMatchForNextGame(
       match,
-      playerId
+      true
     );
 
     return res.json(
@@ -3695,8 +3976,19 @@ app.post(
 
 // =============================================================================
 // LEAVE / EXIT
+//
+// Explicit EXIT:
+//   immediate loss.
+//
+// If the player already finished or is merely viewing the bracket:
+//   harmless.
+//
+// If player is semifinal winner waiting for Final:
+//   remove Final eligibility.
+//
+// Exited player can later press TWIST again and come back as spectator,
+// not as active competitor in the old match.
 // =============================================================================
-
 app.post(
   "/api/twist-league/leave",
   (req, res) => {
@@ -3706,7 +3998,6 @@ app.post(
           ""
       );
 
-    // Remove from queue.
     twistLeagueQueue.delete(
       playerId
     );
@@ -3716,10 +4007,19 @@ app.post(
         playerId
       );
 
-    // Finished tournament:
-    // harmless exit, no lock.
+    if (!tournament) {
+      return res.json({
+        ok: true,
+
+        status:
+          "already-left-or-finished",
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // FINISHED TOURNAMENT
+    // -------------------------------------------------------------------------
     if (
-      tournament &&
       isTwistTournamentFinished(
         tournament
       )
@@ -3740,15 +4040,6 @@ app.post(
       });
     }
 
-    if (!tournament) {
-      return res.json({
-        ok: true,
-
-        status:
-          "already-left-or-finished",
-      });
-    }
-
     const player =
       tournament.players.find(
         (entry) =>
@@ -3762,7 +4053,30 @@ app.post(
       });
     }
 
-    // Mark permanently LEFT for this tournament.
+    // If already left, don't repeat logic.
+    if (
+      player.status ===
+      "left"
+    ) {
+      return res.json({
+        ok: true,
+
+        status:
+          "already-left",
+
+        tournamentId:
+          tournament.id,
+
+        bracket:
+          getTwistTournamentBracket(
+            tournament
+          ),
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // MARK LEFT IMMEDIATELY
+    // -------------------------------------------------------------------------
     player.status =
       "left";
 
@@ -3775,7 +4089,11 @@ app.post(
     player.finalMatchId =
       null;
 
-    // Explicit EXIT is instant loss.
+    // -------------------------------------------------------------------------
+    // ACTIVE MATCH?
+    //
+    // EXPLICIT EXIT = INSTANT LOSS.
+    // -------------------------------------------------------------------------
     const activeMatch =
       findActiveTwistMatchByPlayerId(
         playerId
@@ -3802,8 +4120,9 @@ app.post(
       });
     }
 
-    // Player already won semifinal and is waiting:
-    // remove them from finalist eligibility.
+    // -------------------------------------------------------------------------
+    // BRACKET VIEW / WAITING
+    // -------------------------------------------------------------------------
     resolveSemifinalExitWalkover(
       tournament,
       playerId
@@ -3827,223 +4146,40 @@ app.post(
 );
 
 // =============================================================================
-// READY TIMEOUT RESOLVER
+// BACKGROUND WATCHDOGS
 // =============================================================================
-
-function resolveTwistReadyTimeout(
-  match
-) {
-  if (!match) {
-    return false;
-  }
-
-  if (
-    match.phase !==
-    "ready"
-  ) {
-    return false;
-  }
-
-  if (
-    match.raceStartAt !==
-    null
-  ) {
-    return false;
-  }
-
-  if (
-    !match.readyDeadlineAt
-  ) {
-    return false;
-  }
-
-  const now =
-    Date.now();
-
-  if (
-    now <
-    match.readyDeadlineAt
-  ) {
-    return false;
-  }
-
-  const readyPlayers =
-    match.players.filter(
-      (player) =>
-        player.ready
-    );
-
-  // ===========================================================================
-  // 0 READY
-  //
-  // Consume the game.
-  // No point.
-  // New scramble.
-  // New 90 sec timer.
-  // ===========================================================================
-
-  if (
-    readyPlayers.length ===
-    0
-  ) {
-    prepareNextTwistGame(
-      match
-    );
-
-    return true;
-  }
-
-  // ===========================================================================
-  // 1 READY
-  //
-  // READY player wins the game.
-  // ===========================================================================
-
-  if (
-    readyPlayers.length ===
-    1
-  ) {
-    const winner =
-      readyPlayers[0];
-
-    const loser =
-      match.players.find(
-        (player) =>
-          player.id !==
-          winner.id
-      );
-
-    if (!loser) {
-      prepareNextTwistGame(
-        match
-      );
-
-      return true;
-    }
-
-    match.phase =
-      "finished";
-
-    match.raceStartAt =
-      null;
-
-    match.readyDeadlineAt =
-      null;
-
-    match.firstSolverId =
-      null;
-
-    match.deadlineAt =
-      null;
-
-    match.winnerId =
-      winner.id;
-
-    match.loserId =
-      loser.id;
-
-    match.seriesWins[
-      winner.id
-    ] =
-      Number(
-        match.seriesWins[
-          winner.id
-        ] || 0
-      ) + 1;
-
-    match.lastGameResult = {
-      gameNumber:
-        match.gameNumber,
-
-      winnerId:
-        winner.id,
-
-      loserId:
-        loser.id,
-
-      playerTimes: {
-        [winner.id]:
-          null,
-
-        [loser.id]:
-          null,
-      },
-
-      seriesWins: {
-        ...match.seriesWins,
-      },
-    };
-
-    completeTwistSeriesIfNeeded(
-      match
-    );
-
-    return true;
-  }
-
-  // ===========================================================================
-  // 2 READY
-  //
-  // Normal start.
-  // ===========================================================================
-
-  match.readyDeadlineAt =
-    null;
-
-  return false;
-}
-
-// =============================================================================
-// QUEUE CLEANUP
-// =============================================================================
-
 setInterval(
   cleanupTwistLeagueQueue,
   5000
 );
-
-// =============================================================================
-// READY WATCHDOG
-// =============================================================================
-
-setInterval(() => {
-  for (
-    const match of
-      twistLeagueMatches.values()
-  ) {
-    if (
-      !match ||
-      match.phase !==
-        "ready"
-    ) {
-      continue;
-    }
-
-    resolveTwistReadyTimeout(
-      match
-    );
-  }
-}, 1000);
-
-// =============================================================================
-// HEARTBEAT WATCHDOG
-// =============================================================================
 
 setInterval(
   resolveTwistDisconnects,
   TWIST_HEARTBEAT_INTERVAL_MS
 );
 
+setInterval(
+  resolveTwistReadyTimeouts,
+  500
+);
+
 // =============================================================================
 // START SERVER
 // =============================================================================
-
 app.listen(
   PORT,
   "0.0.0.0",
   () => {
     console.log(
       `[api] CubePulse public server listening on ${PORT}`
+    );
+
+    console.log(
+      `[api] Twist ready timeout: ${TWIST_READY_TIMEOUT_MS / 1000}s`
+    );
+
+    console.log(
+      `[api] Twist heartbeat timeout: ${TWIST_DISCONNECT_TIMEOUT_MS / 1000}s`
     );
   }
 );

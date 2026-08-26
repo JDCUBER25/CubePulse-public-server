@@ -764,6 +764,38 @@ function cleanupTwistLeagueQueue() {
 // A player who exited cannot rejoin THIS active tournament.
 // Once tournament is finished, the same player may join a future tournament.
 // -----------------------------------------------------------------------------
+function isTwistTournamentFinished(tournament) {
+  if (!tournament) return false;
+
+  // Normal terminal state.
+  if (tournament.phase === 'finished') {
+    return true;
+  }
+
+  // Safety net: once a champion is assigned, this tournament is terminal
+  // even if a client/server race left phase one tick behind.
+  if (tournament.championId) {
+    return true;
+  }
+
+  // Safety net for an actually finished Final match whose tournament phase
+  // has not yet been synchronized.
+  if (tournament.finalMatchId) {
+    const finalMatch =
+      twistLeagueMatches.get(tournament.finalMatchId);
+
+    if (
+      finalMatch &&
+      finalMatch.phase === 'finished' &&
+      finalMatch.seriesWinnerId
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function findActiveTwistTournamentByPlayerId(
   playerId
 ) {
@@ -771,10 +803,7 @@ function findActiveTwistTournamentByPlayerId(
     const tournament
     of twistLeagueTournaments.values()
   ) {
-    if (
-      tournament.phase ===
-      'finished'
-    ) {
+    if (isTwistTournamentFinished(tournament)) {
       continue;
     }
 
@@ -2263,8 +2292,7 @@ app.post(
 
     if (
       oldTournament &&
-      oldTournament.phase !==
-        'finished'
+      !isTwistTournamentFinished(oldTournament)
     ) {
       const oldPlayer =
         oldTournament.players.find(
@@ -3121,9 +3149,23 @@ app.post(
 
     // Find the active tournament.
     const tournament =
-      findActiveTwistTournamentByPlayerId(
+      findTwistTournamentByPlayerId(
         playerId
       );
+
+    // Leaving a completed tournament must never lock the player out of the
+    // next tournament. Only an actually active tournament can be forfeited.
+    if (
+      tournament &&
+      isTwistTournamentFinished(tournament)
+    ) {
+      return res.json({
+        ok: true,
+        status: 'finished-no-lock',
+        tournamentId: tournament.id,
+        bracket: getTwistTournamentBracket(tournament),
+      });
+    }
 
     if (!tournament) {
       // It may already be in a finished tournament,

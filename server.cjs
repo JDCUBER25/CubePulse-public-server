@@ -927,12 +927,16 @@ function getTwistTournamentBracket(
       tournament.championId,
 
     championName:
-      tournament.players.find(
-        (player) =>
-          player.id ===
-          tournament.championId
-      )?.username ??
-      null,
+      tournament.phase ===
+        'finished' &&
+      tournament.championId
+        ? tournament.players.find(
+            (player) =>
+              player.id ===
+              tournament.championId
+          )?.username ??
+          null
+        : null,
 
     slots:
       tournament.players.map(
@@ -1535,6 +1539,9 @@ function promoteSemifinalWinner(
 // -----------------------------------------------------------------------------
 // Complete BO3 series
 // -----------------------------------------------------------------------------
+// Champion is assigned ONLY here for the actual Final.
+// Semifinal winners are finalists, never champions.
+// -----------------------------------------------------------------------------
 function completeTwistSeriesIfNeeded(
   match
 ) {
@@ -1832,6 +1839,7 @@ function resolveSemifinalExitWalkover(
       )
       .filter(Boolean);
 
+  // Two semifinal winners means the actual Final can be created.
   if (
     winners.length === 2
   ) {
@@ -1842,33 +1850,46 @@ function resolveSemifinalExitWalkover(
     return;
   }
 
+  // IMPORTANT:
+  // A semifinal winner is NEVER the Champion.
+  // If the other semifinal has no winner, keep the tournament active.
+  // The surviving player remains a semifinal/finalist candidate until
+  // the actual Final is completed.
   if (
     winners.length === 1
   ) {
-    const championId =
+    const finalistId =
       winners[0];
 
-    tournament.championId =
-      championId;
-
-    tournament.phase =
-      'finished';
-
-    const winner =
+    const finalist =
       tournament.players.find(
         (player) =>
           player.id ===
-          championId
+          finalistId
       );
 
-    if (winner) {
-      winner.status =
-        'champion';
+    if (finalist) {
+      finalist.status =
+        'semifinal-winner';
 
-      winner.eliminated =
+      finalist.eliminated =
         false;
     }
+
+    tournament.championId =
+      null;
+
+    tournament.phase =
+      'semifinals';
+
+    return;
   }
+
+  tournament.championId =
+    null;
+
+  tournament.phase =
+    'semifinals';
 }
 
 // -----------------------------------------------------------------------------
